@@ -1,0 +1,457 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Quiltopia SQL test</title>
+<pre id="out">running</pre>
+<script src="../js/config.js"></script>
+<script src="../js/rules.js"></script>
+<script src="../js/stitchlings.js"></script>
+<script src="../js/seed.js"></script>
+<script src="../tools/seed-sql.js"></script>
+<script type="module">
+  // Runs supabase/schema.sql and the generated seed in PGlite (Postgres compiled to WebAssembly), with a
+  // stand-in for Supabase's auth schema and roles, then plays the rules through as a dozen players.
+  // Run with: msedge --headless=new --allow-file-access-from-files --virtual-time-budget=600000 --dump-dom tests/sql-test.html
+  const out = document.getElementById('out');
+  const lines = [];
+  let failures = 0;
+  const check = (ok, msg) => { lines.push((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; return ok; };
+  const R = window.QuiltRules;
+
+  function read(path) {
+    const x = new XMLHttpRequest();
+    x.open('GET', path, false);
+    x.send();
+    return x.responseText;
+  }
+
+  // Supabase gives every new table and function to these roles; RLS and the schema's revokes do the rest.
+  const SUPABASE = `
+    create role anon; create role authenticated; create role service_role;
+    grant usage on schema public to anon, authenticated;
+    alter default privileges in schema public grant all on tables to anon, authenticated;
+    alter default privileges in schema public grant all on functions to anon, authenticated;
+    alter default privileges in schema public grant all on sequences to anon, authenticated;
+    create schema auth;
+    grant usage on schema auth to anon, authenticated;
+    create table auth.users (id uuid primary key);
+    create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('test.uid', true), '')::uuid $$;
+    create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('test.jwt', true), ''), '{}')::jsonb $$;
+    grant execute on function auth.uid(), auth.jwt() to anon, authenticated;
+    create publication supabase_realtime;`;
+
+  // The same scatter as hash2 in js/stitchlings.js.
+  function hash2(x, y) {
+    let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  (async () => {
+    try {
+      const { PGlite } = await import('https://cdn.jsdelivr.net/npm/@electric-sql/pglite@0.2.12/dist/index.js');
+      const db = new PGlite();
+      const rows = async (sql, params) => (await db.query(sql, params)).rows;
+      const one = async (sql, params) => (await rows(sql, params))[0];
+      const as = (uid) => db.query("select set_config('test.uid', $1, false)", [uid || '']);
+      const call = async (fn, ...args) => (await one(`select public.${fn}(${args.map((_, i) => '$' + (i + 1)).join(', ')}) as r`, args)).r;
+      const newUser = async () => { const id = crypto.randomUUID(); await db.query('insert into auth.users (id) values ($1)', [id]); return id; };
+      const fails = async (sql, params) => { try { await db.query(sql, params); return false; } catch (e) { return e.message; } };
+
+      // ----- Setup -----
+      await db.exec(SUPABASE);
+      const schema = read('../supabase/schema.sql');
+      await db.exec(schema);
+      check(true, 'schema.sql runs');
+      await db.exec(schema);
+      check(true, 'and runs again cleanly');
+      const seed = window.QuiltSeedSql.generate({ plannedBlocks: 8 });
+      await db.exec(seed);
+      await db.exec(seed);
+      check(Number((await one('select count(*) as n from blocks')).n) === 4, 'seed: the first four Blocks (and it runs twice)');
+      check(Number((await one('select count(*) as n from block_plans')).n) === 8, 'seed: eight more Blocks planned ahead');
+      const landscape = Number((await one('select count(*) as n from patches')).n);
+      check(landscape === window.QuiltSeed.landscape().length, `seed: the landscape (${landscape} patches)`);
+
+      // ----- Joining -----
+      const A = await newUser();
+      await as(A);
+      let r = await call('join_world', 'Cozy Otter', null, null);
+      check(r.ok && r.me.homeBlock === 0 && r.me.homePlot === 0, 'the first player gets Thimble Hollow #0');
+      check(r.me.gifts.length === 5 && r.me.gifts.every((g) => g.from === 'kit') && r.me.gifts[0].kind === 'house', 'with the five-patch welcome kit, house first');
+      check(r.me.picks === 3 && Object.values(r.me.items).reduce((a, b) => a + b, 0) === 2, '3 picks and 2 surprises for the first hour');
+      r = await call('join_world', 'Happy Fox', null, null);
+      check(r.ok && r.me.name === 'Cozy Otter', 'joining twice just returns you');
+      const badName = await call('set_name', 'Very Rude');
+      check(badName.ok === false, 'names must come from the word lists');
+
+      const home = R.plotRect(R.BLOCKS[0], 0);
+      const kit = R.KIT.map((k) => ({ x: home.x + k.dx, y: home.y + k.dy, kind: k.kind }));
+      r = await call('place_patch', kit[0].x, kit[0].y, 'house');
+      check(r.ok && r.patch.gift === 'kit' && r.me.xp === R.XP.patch, 'placing the kit house: uses the kit, +10 XP');
+      const other = R.plotRect(R.BLOCKS[0], 7);
+      r = await call('place_patch', other.x, other.y, 'tree');
+      check(r.ok === false && /saved for a new neighbor/.test(r.error), "can't build on a free plot that isn't yours");
+      r = await call('place_patch', 64 + 30, 30, 'house');
+      check(r.ok === false && /shared land in|live in Button Meadow|already patched/.test(r.error), "only Button Meadow's residents build on its shared land");
+      r = await call('place_patch', 999, 999, 'house');
+      check(r.ok === false && /past the edge/.test(r.error), 'nothing past the edge of the quilt');
+      for (const k of kit.slice(1, 4)) r = await call('place_patch', k.x, k.y, k.kind);
+      check(r.ok && !r.kitDone, 'four kit patches placed');
+      r = await call('place_patch', kit[4].x, kit[4].y, 'path');
+      check(r.ok && r.kitDone === true, 'the fifth finishes the kit');
+      check(r.me.xp === 5 * R.XP.patch + R.KIT_XP + 2 * R.XP.wish && r.levelUp === 2 && r.me.buttons === 40, 'kit bonus: Level 2 and 40 Buttons');
+      check(r.me.kitDone === true && r.me.gifts.length === 0, 'kit marked done');
+      const homeKey = `${kit[0].x},${kit[0].y}`;
+      check(JSON.stringify(r.me.wishes[homeKey]) === '["food","path"]', 'the kit grants their first wishes: fed, and a path to the door');
+
+      // ----- Wishes -----
+      r = await call('place_patch', home.x + 4, home.y + 3, 'park');
+      check(r.ok && r.wishes && r.wishes.map((w) => w.need).join() === 'fun', 'a park nearby grants their wish for fun');
+      check(r.me.buttons === 40 && r.me.xp === 6 * R.XP.patch + R.KIT_XP + 3 * R.XP.wish, `each wish pays ${R.XP.wish} XP`);
+      r = await call('place_patch', home.x + 4, home.y + 2, 'garden');
+      check(r.ok && !r.wishes, 'a wish pays only once per home');
+      await db.query('update players set wish_count = $2 where id = $1', [A, R.WISH_DAILY]);
+      r = await call('place_patch', home.x + 7, home.y + 2, 'house');
+      check(r.ok && !r.wishes, `no more than ${R.WISH_DAILY} wishes a day`);
+      await db.query('update players set wish_count = 0 where id = $1', [A]);
+      r = await call('pick_up', r.patch.id);
+      check(r.ok, '(the extra house goes back in the bag)');
+
+      // ----- Stitchlings -----
+      r = await call('meet_stitchling', 'pinbun', kit[0].x, kit[0].y, false);
+      check(r.ok && r.isNew === true && r.me.stitchbook.pinbun, 'meeting an everyday Stitchling adds it to the Stitchbook');
+      r = await call('meet_stitchling', 'pinbun', kit[0].x, kit[0].y, false);
+      check(r.ok && r.isNew === false, 'meeting it again is not new');
+      r = await call('meet_stitchling', 'firefly', kit[0].x, kit[0].y, false);
+      check(r.ok === false, "a Firefly can't be met where none lives");
+      await db.query("insert into patches (x, y, kind) values ($1, $2, 'lantern'), ($3, $4, 'water')", [home.x + 1, home.y + 5, home.x + 0, home.y + 5]);
+      r = await call('meet_stitchling', 'firefly', home.x + 1, home.y + 5, false);
+      check(r.ok && r.isNew, 'but can by a lantern with water and a tree around it');
+      r = await call('meet_stitchling', 'treesprite', 90, 90, false);
+      check(r.ok === false && /builders of the Great Treehouse/.test(r.error), 'Wonder Stitchlings only come from finishing the Wonder');
+      for (const sp of ['buttonling', 'thimblet', 'spoolkin', 'patchpup']) r = await call('meet_stitchling', sp, 5, 5, false);
+      check(!r.pageDone, 'five of six everyday Stitchlings');
+      const keepBefore = (r.me.keep.bench || 0), buttonsBefore = r.me.buttons;
+      r = await call('meet_stitchling', 'yarnling', 5, 5, false);
+      const levelButtons = r.levelUp ? 20 * r.levelUp : 0;
+      check(r.pageDone === 'everyday' && r.me.keep.bench === keepBefore + 1 && r.me.buttons === buttonsBefore + 50 + levelButtons, 'the sixth completes the page: 50 Buttons and a Bench');
+
+      // ----- Calendar and goals -----
+      r = await call('claim_day');
+      check(r.ok && r.reward && r.reward.day === 1 && r.reward.buttons === 20, 'calendar day 1 pays 20 Buttons');
+      r = await call('claim_day');
+      check(r.ok && r.reward === null, 'only once a day');
+      await db.query('update players set calendar_day = 2, calendar_last = -1 where id = $1', [A]);
+      r = await call('claim_day');
+      check(r.reward.day === 3 && R.DECOR.includes(r.reward.keep) && r.me.keep[r.reward.keep] >= 1, `calendar day 3 gives a decoration (${r.reward.keep})`);
+      const goals = await call('get_goals');
+      check(goals.list.length === 3 && goals.list.every((g) => R.GOALS[g.id]), 'three daily goals');
+      const place3 = goals.list.find((g) => g.id === 'place3');
+      if (place3) check(place3.done && place3.count === 3, 'placing patches counts toward "Place 3 patches"');
+      const doneGoals = goals.list.filter((g) => g.done).map((g) => g.id);
+      const b0 = (await call('get_me')).me.buttons;
+      r = await call('claim_goals');
+      check(r.ok && r.newly.length === doneGoals.length && r.me.buttons === b0 + R.GOAL_BUTTONS * doneGoals.length + (doneGoals.length === 3 ? R.GOALS_BONUS : 0), `finished goals pay out (${doneGoals.join(', ') || 'none yet'})`);
+      r = await call('claim_goals');
+      check(r.ok && r.newly.length === 0, 'and only once');
+
+      // ----- A friend arrives through an invite -----
+      const B = await newUser();
+      await as(B);
+      r = await call('join_world', 'Brave Fox', 'BR', A);
+      check(r.ok && r.me.homePlot === 1 && r.me.friends.includes(A) && r.me.invitedBy === A, 'the invited friend gets the next home and is friends with the inviter');
+      check((await one('select friends from players where id = $1', [A])).friends.includes(B), 'both ways');
+      const tree = { x: 88, y: 86 };
+      const slots = R.slotsOf('treehouse').map((s) => ({ x: tree.x + s.dx, y: tree.y + s.dy, kind: s.kind }));
+      const tSlots = slots.filter((s) => s.kind === 'tree');
+      r = await call('place_patch', tSlots[0].x, tSlots[0].y, 'house');
+      check(r.ok === false && /needs a Tree/.test(r.error), 'a Wonder slot takes only its own kind');
+      const xpA = (await one('select xp from players where id = $1', [A])).xp;
+      r = await call('place_patch', tSlots[0].x, tSlots[0].y, 'tree');
+      check(r.ok && r.patch.wonder === 1 && r.me.xp === R.XP.wonderSlot, 'filling a Wonder slot: +25 XP');
+      check((await one('select xp from players where id = $1', [A])).xp === xpA + R.XP.inviteFilled, 'and the inviter gets 100 XP');
+      check((await one('select filled from wonders where id = 1')).filled === 1, 'the Treehouse counts it');
+      await call('place_patch', tSlots[1].x, tSlots[1].y, 'tree');
+      await call('place_patch', tSlots[2].x, tSlots[2].y, 'tree');
+      r = await call('place_patch', tSlots[3].x, tSlots[3].y, 'tree');
+      check(r.ok === false && /filled 3 slots/.test(r.error), 'three slots per Wonder per hour');
+      const frame = { x: tree.x, y: tree.y };
+      r = await call('place_patch', frame.x, frame.y, 'tree');
+      check(r.ok === false && /frames the Great Treehouse/.test(r.error), "the Wonder's frame can't be built on");
+
+      // ----- Visiting: paths that reach a neighbor's home -----
+      // B's house and door path, and a paved lane from beside A's door to B's.
+      const lane = home.y + 8;
+      await db.query('delete from patches where owner is null and y = $1 and x between $2 and $3', [lane, home.x + 3, home.x + 13]);
+      await db.query("insert into patches (x, y, kind) select gx, $1, 'path' from generate_series($2::int, $3::int) gx", [lane, home.x + 4, home.x + 13]);
+      await db.query("insert into patches (x, y, kind, owner) values ($1, $2, 'house', $5), ($1, $3, 'path', $5), ($1, $4, 'path', $5)", [home.x + 13, home.y + 5, home.y + 6, home.y + 7, B]);
+      await as(A);
+      await db.query('update players set picks = 5 where id = $1', [A]);
+      const visitButtons = (await call('get_me')).me.buttons;
+      r = await call('place_patch', home.x + 3, lane, 'path');
+      check(r.ok && r.wishes && r.wishes.map((w) => w.need).join() === 'visit,cozy', "the last piece of path to B's home: A's Stitchlings can visit, and the home is very cozy");
+      check(r.me.buttons === visitButtons + R.COZY_BUTTONS, `very cozy pays ${R.COZY_BUTTONS} Buttons`);
+      check((await one('select public.home_needs($1, $2) as n', [home.x + 13, home.y + 5])).n.visit === true, "B's Stitchlings can visit A too");
+      await as(B);
+
+      // ----- Kindness -----
+      const garden = (await one("select id from patches where owner = $1 and kind = 'garden'", [A])).id;
+      r = await call('water_garden', garden);
+      check(r.ok && r.bonus === true, "watering a neighbor's garden earns a bonus patch");
+      r = await call('water_garden', garden);
+      check(r.ok === false && /already watered/.test(r.error), 'once an hour per garden');
+      r = await call('send_sticker', 'home:' + A, 'heart');
+      check(r.ok, "a heart on A's home");
+      r = await call('send_sticker', 'home:' + A, 'wow');
+      check(r.ok === false && /already left a sticker/.test(r.error), 'one sticker per home per day');
+      r = await call('send_sticker', 'home:' + B, 'heart');
+      check(r.ok === false, 'not on your own home');
+      r = await call('send_sticker', 'wonder:1', 'clap');
+      check(r.ok, 'Wonders take stickers too');
+      const giftKind = (await call('get_me')).me.picks > 0 ? 'garden' : Object.keys((await call('get_me')).me.items)[0];
+      r = await call('send_gift', A, giftKind);
+      check(r.ok, `B gifts A a ${giftKind}`);
+      r = await call('send_gift', A, giftKind);
+      check(r.ok === false && /one gift a day/.test(r.error), 'one gift a day');
+      await as(A);
+      r = await call('get_me');
+      check(r.me.gifts.length === 1 && r.me.gifts[0].from === B, "it waits in A's bag, from B");
+      r = await call('place_patch', home.x + 6, home.y + 1, giftKind);
+      check(r.ok && r.patch.gift === B, 'and carries B\'s name when placed');
+
+      // ----- The shop, decorations and styles -----
+      await as(B);
+      r = await call('buy_item', 'bench');
+      check(r.ok === false && /opens at Level 3/.test(r.error), 'the shop opens at Level 3');
+      await as(A);
+      await db.query('update players set xp = 1000, buttons = 500 where id = $1', [A]);
+      r = await call('buy_item', 'bench');
+      check(r.ok && r.me.buttons === 460, 'a Bench for 40 Buttons');
+      r = await call('buy_item', 'scarf');
+      check(r.ok && r.me.outfits.includes('scarf'), 'and a scarf');
+      r = await call('buy_item', 'scarf');
+      check(r.ok === false, 'only one of each outfit');
+      r = await call('place_patch', 30, 20, 'bench');
+      check(r.ok === false && /Decorations go in your home/.test(r.error), 'decorations only go in your home');
+      r = await call('place_patch', home.x + 7, home.y + 7, 'bench');
+      check(r.ok, 'a Bench in the home');
+      r = await call('pick_up', r.patch.id);
+      check(r.ok && r.me.keep.bench >= 1, 'picked back up, it goes back with your keepsakes');
+      r = await call('equip', JSON.stringify({ outfit: 'scarf' }));
+      check(r.ok && r.me.outfit === 'scarf', 'wearing the scarf');
+      r = await call('equip', JSON.stringify({ style: 'gingham' }));
+      check(r.ok === false && /locked/.test(r.error), 'gingham roofs are locked');
+      await db.query('select public.grant_xp($1, 600)', [A]);
+      r = await call('equip', JSON.stringify({ style: 'gingham' }));
+      check(r.ok && r.me.style === 'gingham', 'Level 6 unlocks them');
+
+      // ----- Quilt fabrics -----
+      r = await call('equip', JSON.stringify({ fabric: 'rosebud' }));
+      check(r.ok && r.me.fabric === 'rosebud', 'any everyday fabric can go on the home');
+      r = await call('equip', JSON.stringify({ fabric: 'mint' }));
+      check(r.ok && r.me.fabric === 'mint', 'Mint Gingham, from Level 4');
+      r = await call('equip', JSON.stringify({ fabric: 'heather' }));
+      check(r.ok === false && /locked/.test(r.error), 'Heather Plaid waits for Level 9');
+      r = await call('equip', JSON.stringify({ fabric: 'starry' }));
+      check(r.ok === false, 'shop fabrics have to be bought first');
+      const b1 = (await call('get_me')).me.buttons;
+      r = await call('buy_item', 'starry');
+      check(r.ok && r.me.fabrics.includes('starry') && r.me.buttons === b1 - 150, 'Starry Night for 150 Buttons');
+      r = await call('buy_item', 'starry');
+      check(r.ok === false, 'only once');
+      r = await call('equip', JSON.stringify({ fabric: 'starry' }));
+      check(r.ok && r.me.fabric === 'starry', 'and on it goes');
+      r = await call('equip', JSON.stringify({ fabric: 'tartan' }));
+      check(r.ok === false, 'no made-up fabrics');
+
+      // ----- The Quiltopia Club -----
+      const clubFabric = R.clubFabricFor(Date.now());
+      r = await call('equip', JSON.stringify({ fabric: clubFabric }));
+      check(r.ok === false, 'Club fabrics are for members');
+      await db.exec('set role authenticated');
+      check(!!(await fails('select public.club_paid($1, now() + interval \'30 days\')', [A])), "the game can't make anyone a member");
+      await db.exec('reset role');
+      await db.exec('set role service_role');
+      r = (await one("select public.club_paid($1, now() + interval '30 days') as r", [A])).r;
+      await db.exec('reset role');
+      check(r.ok, 'the payment hook (service role) records a membership');
+      r = await call('get_me');
+      check(r.me.clubUntil > Date.now() && r.me.fabrics.includes(clubFabric), `a member, with this month's ${R.FABRICS[clubFabric].name}`);
+      r = await call('equip', JSON.stringify({ fabric: clubFabric }));
+      check(r.ok && r.me.fabric === clubFabric, 'which can go on the home');
+      r = await call('get_me');
+      check(!r.clubFabric, "the month's fabric is given once");
+
+      // ----- Founding a Wonder -----
+      r = await call('found_wonder', 'fountain', 3, 0);
+      check(r.ok === false && /already has a Wonder/.test(r.error), "the Treehouse's lot is taken");
+      r = await call('found_wonder', 'fountain', 3, 1);
+      const fountain = r.wonder;
+      check(r.ok && fountain.status === 'founding' && fountain.founders.length === 1, 'A founds the Grand Fountain');
+      const placed = R.placeInLot('fountain', R.BLOCKS[3], 1);
+      check(fountain.x === placed.x && fountain.y === placed.y && fountain.slots === R.slotsOf('fountain').length, 'in the middle of its lot, with the right slots');
+      r = await call('found_wonder', 'teapot', 3, 2);
+      check(r.ok === false && /already gathering founders/.test(r.error), 'one founding at a time');
+      r = await call('place_patch', fountain.x + 3, fountain.y + 3, 'garden');
+      check(r.ok === false && /gathering founders/.test(r.error), "can't build it until it has founders");
+      const founders = [];
+      for (let i = 0; i < 9; i++) {
+        const id = await newUser();
+        await as(id);
+        await call('join_world', 'Happy Owl', null, null);
+        founders.push(id);
+        r = await call('sign_founder', fountain.id);
+      }
+      check(r.ok && r.wonder.status === 'open' && r.wonder.founders.length === 10, 'ten founders open it for building');
+      check((await one('select xp from players where id = $1', [founders[0]])).xp >= R.XP.founded, 'founders get XP when it opens');
+      r = await call('sign_founder', fountain.id);
+      check(r.ok === false, 'no signing after it opens');
+
+      // ----- Finishing the Treehouse -----
+      const C = founders[0];
+      const filled = new Set((await rows('select x, y from patches where wonder_id = 1')).map((p) => p.x + ',' + p.y));
+      const left = slots.filter((s) => !filled.has(s.x + ',' + s.y));
+      const last = left.find((s) => s.kind === 'tree');
+      const rest = left.filter((s) => s !== last);
+      for (let i = 0; i < rest.length; i += 50) {
+        const chunk = rest.slice(i, i + 50);
+        await db.query(`insert into patches (x, y, kind, owner, wonder_id) values ${chunk.map((s, k) => `(${s.x}, ${s.y}, '${s.kind}', $${(k % 2) + 1}, 1)`).join(', ')}`, [A, B]);
+      }
+      await db.query('update wonders set filled = (select count(*) from patches where wonder_id = 1) where id = 1');
+      await as(C);
+      const sprite0 = (await one('select buttons from players where id = $1', [A])).buttons;
+      r = await call('place_patch', last.x, last.y, 'tree');
+      check(r.ok && (await one('select completed_at from wonders where id = 1')).completed_at, 'the last slot finishes the Great Treehouse');
+      check(r.me.stitchbook.treesprite, 'its builder gets the Treehouse Sprite');
+      const a = await one('select stitchbook, buttons from players where id = $1', [A]);
+      check(a.stitchbook.treesprite && a.buttons >= sprite0 + R.WONDER_BUTTONS, 'so does every other builder, with 50 Buttons');
+      check(!(await one("select count(*)::int as n from wonders where status = 'founding'")).n, 'the Fountain is still going up, so the town proposes nothing yet');
+
+      // ----- Finishing the Fountain too: the town proposes the next Wonder -----
+      const fSlots = R.slotsOf('fountain').map((s) => ({ x: fountain.x + s.dx, y: fountain.y + s.dy, kind: s.kind }));
+      const fLast = fSlots.find((s) => s.kind === 'garden');
+      const fRest = fSlots.filter((s) => s !== fLast);
+      for (let i = 0; i < fRest.length; i += 50) {
+        const chunk = fRest.slice(i, i + 50);
+        await db.query(`insert into patches (x, y, kind, owner, wonder_id) values ${chunk.map((s, k) => `(${s.x}, ${s.y}, '${s.kind}', $${(k % 2) + 1}, ${fountain.id})`).join(', ')}`, [A, B]);
+      }
+      await db.query('update wonders set filled = (select count(*) from patches where wonder_id = $1) where id = $1', [fountain.id]);
+      r = await call('place_patch', fLast.x, fLast.y, 'garden');
+      check(r.ok && (await one('select completed_at from wonders where id = $1', [fountain.id])).completed_at, 'the last slot finishes the Grand Fountain');
+      const ws = await rows('select id, blueprint, block_id, lot, x, y, slots, status, founders, founded_by, completed_at from wonders order by id');
+      const proposed = ws.filter((w) => w.status === 'founding');
+      const expect = R.nextProposal({ blocks: R.BLOCKS, wonders: ws.map((w) => ({ blueprint: w.blueprint, block: w.block_id, lot: w.lot, completedAt: w.completed_at })).filter((w) => w.completedAt) });
+      const at = expect && R.placeInLot(expect.blueprint, R.BLOCKS.find((b) => b.id === expect.blockId), expect.lot);
+      check(proposed.length === 1 && expect && proposed[0].blueprint === expect.blueprint && proposed[0].block_id === expect.blockId && proposed[0].lot === expect.lot,
+        `with none left, the town proposes the ${proposed[0] && proposed[0].blueprint} (the same pick as rules.js)`);
+      check(proposed[0] && proposed[0].x === at.x && proposed[0].y === at.y && proposed[0].slots === R.slotsOf(expect.blueprint).length, 'in the middle of its lot, with the right slots');
+      check(proposed[0] && !proposed[0].founders.length && proposed[0].founded_by === null, 'nobody has signed it yet');
+      r = await call('sign_founder', proposed[0].id);
+      check(r.ok && r.wonder.founders.length === 1 && r.wonder.status === 'founding', 'and anyone can sign it');
+
+      // ----- Rare Stitchlings (where they live) -----
+      const site = async (sp, x, y, night) => (await one('select public.rare_site_near($1, $2, $3, $4) as ok', [sp, x, y, !!night])).ok;
+      const put = (list) => db.query(`insert into patches (x, y, kind) values ${list.map(([x, y, k]) => `(${x}, ${y}, '${k}')`).join(', ')} on conflict (x, y) do nothing`);
+      const P = (col, row) => R.plotRect(R.BLOCKS[1], row * 6 + col);
+      let p = P(5, 5);
+      check(!(await site('picnicpip', p.x, p.y)), 'no Picnic Pip on empty land');
+      await put([[p.x + 2, p.y + 2, 'park'], [p.x + 3, p.y + 2, 'garden'], [p.x + 2, p.y + 3, 'tree']]);
+      check(await site('picnicpip', p.x + 2, p.y + 2), 'Picnic Pip: a park, a garden and a tree touching');
+      p = P(4, 5);
+      await put([[p.x + 3, p.y + 3, 'fountain'], [p.x + 1, p.y + 3, 'park']]);
+      check(!(await site('splashkin', p.x + 3, p.y + 3)), 'Splashkin needs two parks by the fountain');
+      await put([[p.x + 5, p.y + 3, 'park']]);
+      check(await site('splashkin', p.x + 3, p.y + 3), 'Splashkin: a fountain with 2 parks around it');
+      p = P(3, 5);
+      await put([[p.x + 1, p.y + 1, 'birdhouse'], [p.x, p.y, 'tree'], [p.x + 7, p.y, 'tree']]);
+      check(!(await site('wren', p.x + 1, p.y + 1)), 'a Wren needs 3 trees in the home');
+      await put([[p.x, p.y + 7, 'tree']]);
+      check(await site('wren', p.x + 1, p.y + 1), 'Wren: a birdhouse in a home with 3 trees');
+      p = P(2, 5);
+      const forest = [];
+      for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) forest.push([p.x + 2 + dx, p.y + 2 + dy, 'tree']);
+      await put(forest.slice(0, 8));
+      check(!(await site('mossling', p.x + 3, p.y + 3)), 'a Mossling needs 9 trees together');
+      await put(forest.slice(8));
+      check(await site('mossling', p.x + 3, p.y + 3), 'Mossling: a forest of 9');
+      p = P(1, 5);
+      await put([0, 1, 2, 3, 4, 5].map((dx) => [p.x + dx, p.y + 2, 'garden']));
+      check(!(await site('bloomkin', p.x + 2, p.y + 2)), 'a Bloomkin needs a park by the field');
+      await put([[p.x + 6, p.y + 3, 'park']]);
+      check(await site('bloomkin', p.x + 2, p.y + 2), 'Bloomkin: 6 gardens beside a park');
+      p = P(0, 4);
+      await put([[p.x, p.y, 'path'], [p.x + 1, p.y, 'lantern'], [p.x + 3, p.y, 'lantern']]);
+      check(!(await site('lamplighter', p.x + 1, p.y)), 'a Lamplighter needs 3 lanterns');
+      await put([[p.x + 5, p.y, 'lantern']]);
+      check(await site('lamplighter', p.x + 1, p.y), 'Lamplighter: 3 lanterns by a path');
+      check(!(await site('bridgekeeper', 21, 95)), 'no Bridgekeeper on an unlit bridge');
+      await put([[21, 96, 'lantern']]);
+      check(await site('bridgekeeper', 21, 95), "Bridgekeeper: Bobbin Bay's footbridge with a lantern");
+      p = P(0, 3);
+      const owners = [A, B, C, founders[1]];
+      await put([[p.x + 1, p.y + 1, 'market'], ...[2, 3, 4, 5, 6].map((dx) => [p.x + dx, p.y + 1, 'path'])]);
+      for (let i = 0; i < 4; i++) await db.query("insert into patches (x, y, kind, owner) values ($1, $2, 'house', $3)", [p.x + 2 + i, p.y, owners[i]]);
+      check(await site('bazaarmouse', p.x + 1, p.y + 1), "Bazaar Mouse: a market whose paths reach 4 builders' homes");
+      const lan = [[200, 7], [35, 41], [1000, 3], [5, 7]].map(([x, y]) => ({ x, y }));
+      let same = true;
+      for (const l of lan) same = same && Math.abs((await one('select public.hash2($1, $2) as h', [l.x, l.y])).h - hash2(l.x, l.y)) < 1e-12;
+      check(same, 'the Glowmoth scatter matches the game exactly');
+
+      // ----- Growth -----
+      // Every free home gets a stand-in neighbor.
+      const fillHomes = () => db.exec(`do $$
+        declare r record; uid uuid;
+        begin
+          for r in select bl.id as b, pl.n as p from blocks bl cross join generate_series(0, 35) pl(n)
+            where bl.kind = 'neighborhood' and not exists (select 1 from players x where x.home_block = bl.id and x.home_plot = pl.n) loop
+            uid := gen_random_uuid();
+            insert into auth.users (id) values (uid);
+            insert into players (id, name, home_block, home_plot) values (uid, 'Tiny Moth', r.b, r.p);
+          end loop;
+        end $$;`);
+      const joinNew = async (name) => { const id = await newUser(); await as(id); return call('join_world', name, null, null); };
+      await fillHomes();
+      r = await joinNew('Daring Heron');
+      const b4 = R.blockFor(4);
+      check(r.ok && r.grew === b4.name && r.me.homeBlock === 4 && r.me.homePlot === 0, `when every home is taken, the quilt grows: ${b4.name}`);
+      const land4 = Number((await one('select count(*) as n from patches where x >= $1 and x < $2 and y >= $3 and y < $4', [b4.gx * 64, b4.gx * 64 + 64, b4.gy * 64, b4.gy * 64 + 64])).n);
+      check(land4 === window.QuiltSeed.landscapeFor(b4).length, `with its landscape (${land4} patches)`);
+      await fillHomes();
+      r = await joinNew('Rosy Comet');
+      check(r.ok && r.me.homeBlock === 5 && r.grew === R.blockFor(5).name, `then ${R.blockFor(5).name}`);
+      await fillHomes();
+      r = await joinNew('Plucky Robin');
+      const b7 = R.blockFor(7);
+      check(r.ok && r.me.homeBlock === 7 && r.grew === b7.name && Number((await one("select count(*) as n from blocks where kind = 'commons'")).n) === 2, `growing past a new Commons (${R.blockFor(6).name}) still finds the newcomer a home`);
+
+      // ----- Exploring -----
+      r = await call('visit_block', 1);
+      check(r.ok && r.isNew === true, 'visiting a new Block counts');
+      r = await call('visit_block', 1);
+      check(r.isNew === false, 'once');
+
+      // ----- What the browser can and can't touch -----
+      await as(A);
+      await db.exec('set role authenticated');
+      check(!!(await fails('select picks from public.players limit 1')), "nobody can read another player's bag");
+      check(!(await fails('select name, xp, style, outfit, fabric, club_until from public.players limit 1')), 'but names, levels, looks and Club badges are public');
+      check(!!(await fails('select * from public.club_subscriptions')), 'who pays for what stays private');
+      const myGifts = await rows('select * from public.gifts');
+      check(myGifts.every((g) => g.to_player === A || g.from_player === A), 'gifts are visible only to who sent and got them');
+      check(!!(await fails("insert into public.patches (x, y, kind) values (300, 300, 'tree')")), 'patches can only be placed through the rules');
+      check(!!(await fails('select public.grant_xp($1, 99999)', [A])), "XP can't be granted from the browser");
+      check(!!(await fails('select * from public.meets')), 'meetings, visits and plans stay private');
+      check(!!(await fails('update public.players set buttons = 99999')), "and nobody can edit their own Buttons");
+      r = (await one('select public.place_patch($1, $2, $3) as r', [home.x + 6, home.y + 6, 'house'])).r;
+      check(r.ok, 'while the player actions work as normal');
+      await db.exec('reset role');
+      await as(await newUser());
+      r = await call('get_me');
+      check(r && r.ok === false && r.me === null, 'someone signed in but not joined yet has no player');
+    } catch (err) {
+      check(false, 'threw: ' + err.message + '\n' + (err.stack || ''));
+    }
+    lines.unshift(failures ? `${failures} FAILURES` : 'ALL PASSED');
+    out.textContent = lines.join('\n');
+  })();
+</script>

@@ -1,0 +1,8 @@
+# Personal Claude Code settings (the kicker's hooks live here)
+.claude/settings.local.json
+
+# The kicker's log, run output and waiter state
+tools/kicker/logs/
+
+# The artifact preview page, built from index.html without its document wrapper
+.preview/

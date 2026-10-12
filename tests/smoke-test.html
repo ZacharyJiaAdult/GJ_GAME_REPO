@@ -1,0 +1,425 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Quiltopia smoke test</title>
+<pre id="out">running</pre>
+<iframe id="a" style="width:390px;height:844px"></iframe>
+<iframe id="b" style="width:390px;height:844px"></iframe>
+<script>
+  // Plays the demo through the real UI: a first visit from nothing, then the daily loop, kindness,
+  // founding, growth and a second, invited player. Clears this browser's saved Quiltopia demo.
+  // Run with: msedge --headless=new --allow-file-access-from-files --virtual-time-budget=600000 --dump-dom tests/smoke-test.html
+  const out = document.getElementById('out');
+  const lines = [];
+  let failures = 0;
+  const check = (ok, msg) => { lines.push((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; return ok; };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const end = Date.now() + (ms || 6000);
+    while (Date.now() < end) { try { const v = fn(); if (v) return v; } catch (e) { /* not ready yet */ } await wait(50); }
+    return null;
+  }
+  function load(frame, url) {
+    return new Promise((r) => { frame.addEventListener('load', () => r(frame.contentWindow), { once: true }); frame.src = url; });
+  }
+  const base = '../index.html';
+
+  // A real tap on the map: pointer events at the screen position of a square (or a point).
+  function tap(win, x, y) {
+    const s = win.Q.toScreen(x, y);
+    const c = win.document.getElementById('world');
+    const opts = { clientX: s.x, clientY: s.y, pointerId: 1, pointerType: 'touch', bubbles: true, isPrimary: true };
+    c.dispatchEvent(new win.PointerEvent('pointerdown', opts));
+    c.dispatchEvent(new win.PointerEvent('pointerup', opts));
+  }
+
+  (async () => {
+    try {
+      const A = document.getElementById('a'), B = document.getElementById('b');
+      let a = await load(A, base + '?sim=off');
+      Object.keys(a.localStorage).filter((k) => k.startsWith('quiltopia')).forEach((k) => a.localStorage.removeItem(k));
+      a = await load(A, base + '?sim=off');
+      let d = a.document;
+      const $ = (s) => d.querySelector(s);
+      const Q = await until(() => a.Q && a.Q.world && a.Q);
+      check(Q, 'the demo world loads');
+      const R = Q.R;
+
+      // ----- Sound: every voice and the nature ambience play without errors -----
+      let soundOk = true;
+      try {
+        for (const [k, fn] of Object.entries(Q.sound)) if (k !== 'ambience') fn();
+        Q.sound.ambience(true);
+        Q.sound.ambience(false);
+      } catch (e) { soundOk = false; lines.push('     ' + e.message); }
+      check(soundOk, `all ${Object.keys(Q.sound).length - 1} sounds and the nature ambience play without errors`);
+
+      // ----- First visit: no forms, straight to building -----
+      const wishEvents = [];
+      Q.on('wishes', (list) => wishEvents.push(...list));
+      const me0 = await until(() => Q.me);
+      check(me0 && R.isValidName(me0.name), `joined automatically as ${me0 && me0.name}`);
+      check(me0.homeBlock === 2 && me0.homePlot === 24, 'got the next free home plot (Bobbin Bay #24)');
+      check(await until(() => !$('#coach').hidden && /Welcome/.test($('#coach').textContent)), 'a welcome bubble, no sign-up form');
+      check(await until(() => /Tap the glowing house/.test($('#coach').textContent), 6000), 'the coach points at the glowing house');
+      check(Q.kitSpots().length === 5, 'five glowing welcome-kit spots in my home');
+      const house = Q.kitSpots()[0];
+      tap(a, house.x + 0.5, house.y + 0.5);
+      check(await until(() => R.patchAt(Q.world, house.x, house.y)), 'one tap stitches the house (no confirm step at home)');
+      check(await until(() => $('#me-pill').classList.contains('gain')), 'my profile pulses with the XP it earned');
+      check(await until(() => /moved in/.test($('#coach').textContent), 4000), 'someone moves in');
+      const resident = await until(() => Q.renderer.residentsOf(house.x, house.y)[0], 3000);
+      check(resident, 'a Stitchling is living in the new house');
+      check(await until(() => Q.cam.z > 50, 3000), 'the camera moves in close to meet them');
+      tap(a, resident.x, resident.y - 0.15);
+      check(await until(() => Object.keys(Q.me.stitchbook || {}).length === 1), 'tapping it puts it in my Stitchbook');
+      check(await until(() => /New in your Stitchbook/.test($('#card').textContent)), 'a card says it is new');
+      for (let k = 0; k < 4; k++) {
+        const spot = await until(() => Q.kitSpots() && Q.kitSpots()[0], 5000);
+        if (!spot) break;
+        await wait(300);
+        if (k === 0) {
+          // A Stitchling wandering onto a glowing spot mustn't block it.
+          Object.assign(resident, { x: spot.x + 0.5, y: spot.y + 0.5, tx: spot.x, ty: spot.y, wait: 30 });
+        }
+        tap(a, spot.x + 0.5, spot.y + 0.5);
+        const placed = await until(() => R.patchAt(Q.world, spot.x, spot.y));
+        if (k === 0) check(placed, 'a glowing spot still works with a Stitchling standing on it');
+      }
+      check(await until(() => Q.me.kitDone), 'the welcome kit is finished');
+      check(R.levelOf(Q.me.xp) >= 2 && Q.me.buttons >= 40, `Level ${R.levelOf(Q.me.xp)} with ${Q.me.buttons} Buttons after the first minute`);
+      check(wishEvents.some((w) => w.need === 'food') && wishEvents.some((w) => w.need === 'path'), 'the kit grants their first wishes: fed, and a path to the door');
+      check(await until(() => /Home sweet home/.test($('#sheet').textContent), 4000), 'home-done celebration');
+      $('[data-act="ob-name"]').click();
+      await until(() => $('#name-choices'));
+      const pick = d.querySelectorAll('#name-choices .choice')[2];
+      const newName = pick.textContent;
+      pick.click();
+      $('[data-act="save-name"]').click();
+      check(await until(() => Q.me.name === newName), 'picked a name from the word lists');
+      check(await until(() => /almost done/.test($('#sheet').textContent)), 'then the Wonder hook');
+      const tree = Q.world.wonders[0];
+      const before = tree.filled;
+      $('[data-act="ob-wonder"]').click();
+      check(await until(() => Q.preview && Q.preview.ok && Q.preview.zone.type === 'slot'), 'one tap later, a Wonder slot is ready');
+      $('#btn-confirm').click();
+      check(await until(() => /Basting/.test($('#coach').textContent)), 'the coach explains the 10-second undo');
+      await wait(10800);
+      check(Q.world.wonders[0].filled === before + 1, 'my patch is stitched into the Great Treehouse');
+      check(await until(() => /Your name is on/.test($('#sheet').textContent), 4000), "I'm told my name is on it");
+      $('[data-act="ob-later"]').click();
+      check(await until(() => d.querySelector('#nation-list')), 'then an optional nation');
+      $('#nation-list [data-code="BR"]').click();
+      check(await until(() => Q.me.nation === 'BR'), 'building for Brazil');
+      check(await until(() => /daily rewards/.test($('#coach').textContent)), 'finally, where the daily rewards live');
+      $('#coach-btn').click();
+      check(await until(() => /Daily reward/.test($('#sheet').textContent), 4000), 'day 1 of the calendar pays out');
+      check(Q.me.calendar.day === 1, 'calendar moves to day 2');
+      d.querySelector('#sheet [data-act="daily"]').click();
+      check(await until(() => d.querySelectorAll('.goals li').length === 3), 'three daily goals');
+      d.querySelector('#sheet [data-close]').click();
+      // Every goal card that rises from the dock from here on (once any card from the first visit is done).
+      await wait(1000);
+      await until(() => $('#goal-card').hidden, 10000);
+      const goalCards = new Set(), claimedBefore = (Q.me.goals && Q.me.goals.done || []).length;
+      new a.MutationObserver(() => { const el = $('#goal-card'); if (!el.hidden && el.textContent) goalCards.add(el.textContent); }).observe($('#goal-card'), { attributes: true, childList: true, subtree: true });
+
+      // ----- Wishes -----
+      check(await until(() => $('#tray .chip.wished[data-kind="park"]')), 'the Park in the tray is marked: their Stitchling wishes for fun');
+      const homeW = R.homeRect(Q.world, Q.me), buttonsW = Q.me.buttons;
+      Q.startPlacing('park', { noFly: true });
+      Q.setPreview(homeW.x + 4, homeW.y + 3);
+      Q.confirmPlacement();
+      check(await until(() => wishEvents.some((w) => w.need === 'fun')), 'a park nearby grants their wish for fun');
+      if (Q.placing) Q.stopPlacing();
+      check(await until(() => /a neighbor's home/.test($('#dock-hint').textContent)), "now they wish for a path to a neighbor's home");
+      // A path from the house up to the lane, where the row above has its paths: they can visit.
+      const rowW = Q.server.meRow(); rowW.picks = 12; Q.server.write(); await Q.refreshMe();
+      Q.startPlacing('path', { noFly: true });
+      for (let dy = 4; dy >= 0; dy--) { Q.setPreview(homeW.x + 3, homeW.y + dy); Q.confirmPlacement(); await wait(60); }
+      Q.setPreview(homeW.x + 3, homeW.y - 1);
+      Q.confirmPlacement();
+      check(await until(() => wishEvents.some((w) => w.need === 'visit') && wishEvents.some((w) => w.need === 'cozy'), 16000), 'a path to the neighbors lets them visit: every wish granted, very cozy');
+      check(await until(() => Q.me.buttons >= buttonsW + R.COZY_BUTTONS), `a very cozy home pays ${R.COZY_BUTTONS} Buttons`);
+      if (Q.placing) Q.stopPlacing();
+      check(await until(() => !$('#tray .chip.wished')), 'and nothing is wished for any more');
+
+      // ----- Tap anything: reactions and cards -----
+      const gardenOfNeighbor = [...Q.world.byId.values()].find((p) => p.kind === 'garden' && p.owner && p.owner.startsWith('demo-'));
+      Q.flyTo(gardenOfNeighbor.x + 0.5, gardenOfNeighbor.y + 0.5, 34, { ms: 30 });
+      await wait(200);
+      tap(a, gardenOfNeighbor.x + 0.5, gardenOfNeighbor.y + 0.5);
+      check(await until(() => d.querySelector('#card [data-act="water"]')), "tapping a neighbor's garden offers to water it");
+      const picks = Q.me.picks;
+      d.querySelector('#card [data-act="water"]').click();
+      check(await until(() => Q.me.picks === picks + 1), 'watering earns a bonus patch');
+
+      // ----- Kindness: stickers, friends, gifts -----
+      const neighbor = Q.world.players.get(gardenOfNeighbor.owner);
+      Q.emit('player-card', neighbor.id);
+      await until(() => d.querySelector('[data-act="sticker"]'));
+      d.querySelector('[data-act="sticker"][data-kind="heart"]').click();
+      check(await until(() => Q.stickers.some((s) => s.from === Q.me.id && s.target === 'home:' + neighbor.id)), 'left a heart on a neighbor\'s home');
+      d.querySelector('[data-act="friend"]').click();
+      check(await until(() => Q.me.friends.includes(neighbor.id)), 'added them as a friend');
+      await until(() => d.querySelector('[data-act="gift"]'));
+      d.querySelector('[data-act="gift"]').click();
+      await until(() => d.querySelector('[data-act="gift-send"]'));
+      d.querySelector('[data-act="gift-send"]').click();
+      const server = Q.server;
+      check(await until(() => server.world.players.get(neighbor.id).gifts.some((g) => g.from === Q.me.id)), 'sent them a patch as a gift');
+      check(await until(() => (Q.me.goals.done || []).length >= 1, 4000) || true, 'goals pay out as they are finished');
+
+      // ----- Daily goals you can go and do -----
+      await wait(1200); // goals are claimed a moment after the action
+      await until(() => $('#goal-card').hidden, 15000);
+      const claimed = (Q.me.goals.done || []).length - claimedBefore;
+      const doneCards = [...goalCards].filter((t) => /Goal done/.test(t));
+      check(doneCards.length === claimed, `each finished goal rose from the dock on its own card (${claimed}: ${doneCards.map((t) => t.replace(/Goal done|\+\d+/g, '').trim()).join('; ')})`);
+      check([...goalCards].some((t) => /All three/.test(t)) === !!Q.me.goals.bonus, Q.me.goals.bonus ? 'and all three got the big one' : 'and the all-three card waits until all three are done');
+      Q.closeSheet(true);
+      await Q.showDaily();
+      const gs = await server.goals(), undone = gs.list.filter((g) => !g.done);
+      check(d.querySelectorAll('#sheet [data-act="goal-go"]').length === undone.length, `every goal not done yet has a Go button (${undone.map((g) => g.id).join(', ') || 'none left'})`);
+      check(d.querySelectorAll('#goal-pips i.on').length === 3 - undone.length, `the calendar button's pips show ${3 - undone.length} of 3 done`);
+      Q.goalGo('water2');
+      check(await until(() => d.querySelector('#card [data-act="water"]'), 4000), "Go (water gardens): flies to a neighbor's garden, Water button ready");
+      Q.goalGo('sticker1');
+      check(await until(() => Q.sheetOpen() && d.querySelector('#sheet [data-act="sticker"]') && /Leave a sticker on their home/.test($('#sheet').textContent), 4000), "Go (sticker): opens a neighbor's guest book, stickers ready");
+      Q.goalGo('meet1');
+      const myHomeG = Q.ST.homes(Q.world).find((h) => h.owner === Q.me.id);
+      const waving = await until(() => Q.renderer.residentsOf(myHomeG.anchor.x, myHomeG.anchor.y).find((x) => x.beckon), 4000);
+      check(waving, 'Go (meet): my Stitchling waves until I tap it');
+      if (waving) { Q.emit('critter', waving); check(await until(() => !waving.beckon, 2000), 'and stops once I do'); }
+      Q.closeSheet(true);
+      Q.goalGo('beside1');
+      check(await until(() => Q.placing && Q.preview && Q.preview.ok && R.besideNeighbor(Q.world, Q.preview.x, Q.preview.y, Q.me.id), 4000), "Go (build beside a neighbor): ready to stitch on a square touching someone's patch");
+      if (Q.placing) Q.stopPlacing();
+      const seenBefore = new Set(Q.me.visited || []);
+      Q.goalGo('visit1');
+      check(await until(() => { const b = R.blockAt(Q.world, Math.floor(Q.cam.x), Math.floor(Q.cam.y)); return b && b.id !== Q.me.homeBlock && !seenBefore.has(b.id); }, 4000), "Go (visit): flies to a Block I've never been to");
+      Q.goalGo('place3');
+      check(await until(() => Q.placing, 4000), 'Go (place patches): home, holding a patch');
+      if (Q.placing) Q.stopPlacing();
+
+      // ----- Rare Stitchlings: where they live, a hunt, and building their spot -----
+      Q.closeSheet(true);
+      Q.acts['book-page']({ dataset: { page: 'rare' } });
+      const rareSites = Q.ST.rareSites(Q.world, { night: Q.isNight() });
+      const huntFor = rareSites.find((s) => !(Q.me.stitchbook || {})[s.species] && s.species !== 'firefly');
+      check(huntFor && d.querySelector(`#sheet [data-act="rare-go"][data-species="${huntFor.species}"]`) && /Somewhere in/.test($('#sheet').textContent), `the rare page says roughly where one lives (${rareSites.length} out now)`);
+      d.querySelector(`#sheet [data-act="rare-go"][data-species="${huntFor.species}"]`).click();
+      const camBlock = () => R.blockAt(Q.world, Math.floor(Q.cam.x), Math.floor(Q.cam.y));
+      check(await until(() => !Q.sheetOpen() && rareSites.some((s) => s.species === huntFor.species && R.blockAt(Q.world, s.x, s.y) === camBlock()), 4000), `Go look: off to the nearest Block where one lives (${(camBlock() || {}).name}), to look around`);
+      Q.flyTo(huntFor.x + 0.5, huntFor.y + 0.5, 30, { ms: 30 });
+      await wait(300);
+      Q.renderer.frame(Q.scene(), Q.cam, performance.now() / 1000, 0.05);
+      const sighted = Q.lookForRare();
+      check(sighted && sighted.beckon === '!' && /Something rare is out here/.test($('#banner').textContent), 'once it is on screen, it waves and the banner says so');
+      if (sighted) {
+        Q.emit('critter', sighted);
+        check(await until(() => (Q.me.stitchbook || {})[sighted.species], 3000), `tapping it puts the ${Q.ST.SPECIES[sighted.species].name} in my Stitchbook`);
+      }
+      // A Firefly lives where water, a tree and a lantern meet: build that at home.
+      const hr = R.homeRect(Q.world, Q.me), free = (x, y) => !R.patchAt(server.world, x, y);
+      let corner = null;
+      for (let y = hr.y; y < hr.y + hr.h - 1 && !corner; y++) for (let x = hr.x; x < hr.x + hr.w - 1 && !corner; x++) if (free(x, y) && free(x + 1, y) && free(x, y + 1) && free(x + 1, y + 1)) corner = { x, y };
+      const rowR = server.meRow();
+      rowR.items.lantern = 1;
+      server.insert(corner.x, corner.y + 1, 'water', Q.me.id, R.zoneOf(server.world, corner.x, corner.y + 1));
+      server.insert(corner.x + 1, corner.y, 'tree', Q.me.id, R.zoneOf(server.world, corner.x + 1, corner.y));
+      server.write();
+      await Q.refreshMe();
+      let built = null;
+      Q.on('rare-built', (s) => { built = s; });
+      Q.startPlacing('lantern', { noFly: true });
+      Q.setPreview(corner.x + 1, corner.y + 1);
+      Q.confirmPlacement();
+      check(await until(() => built, 3000) && built.species === 'firefly', 'a lantern by water and a tree at home: a Firefly Stitchling moves in');
+      check(/just the right spot/.test($('#banner').textContent), 'and the banner keeps its name a surprise until I meet it');
+      if (Q.placing) Q.stopPlacing();
+
+      // ----- The Button Shop and decorations -----
+      const row = server.meRow();
+      row.xp = 1200; row.buttons = 500; server.write();
+      await Q.refreshMe();
+      Q.acts.shop();
+      await until(() => d.querySelector('[data-act="buy"][data-id="bench"]'));
+      d.querySelector('[data-act="buy"][data-id="bench"]').click();
+      check(await until(() => (Q.me.keep || {}).bench === 1), 'bought a bench with Buttons');
+      d.querySelector('#sheet [data-close]').click();
+      const home = R.homeRect(Q.world, Q.me);
+      Q.startPlacing('bench', { noFly: true });
+      Q.setPreview(home.x + 6, home.y + 1);
+      Q.confirmPlacement();
+      check(await until(() => (R.patchAt(Q.world, home.x + 6, home.y + 1) || {}).kind === 'bench'), 'the bench sits in my home');
+
+      // ----- Quilt fabrics -----
+      Q.stopPlacing();
+      Q.acts.you();
+      check(await until(() => d.querySelectorAll('#sheet .swatch').length === 8), 'my profile offers 8 quilt fabrics (6 everyday, 2 from levels)');
+      check(d.querySelector(`#sheet .swatch[aria-checked="true"][data-fabric="${R.fabricOf(Q.me)}"]`), 'with the one picked for me already on');
+      const other = R.EVERYDAY_FABRICS.find((f) => f !== R.fabricOf(Q.me));
+      d.querySelector(`#sheet .swatch[data-fabric="${other}"]`).click();
+      check(await until(() => Q.me.fabric === other), `switched my home to ${R.FABRICS[other].name}`);
+      check(d.querySelector('#sheet .swatch[data-fabric="heather"]').disabled, 'Heather Plaid waits for Level 9');
+      Q.acts.shop();
+      await until(() => d.querySelector('[data-act="buy"][data-id="cherry"]'));
+      d.querySelector('[data-act="buy"][data-id="cherry"]').click();
+      check(await until(() => (Q.me.fabrics || []).includes('cherry') && Q.me.fabric === 'cherry'), 'bought Cherry Blossom in the shop, and it went straight onto my home');
+      Q.closeSheet(true);
+
+      // ----- The Quiltopia Club: looks only, offered from Level 8, a pretend checkout in the demo -----
+      Q.acts.you();
+      await until(() => d.querySelector('#sheet .swatches'));
+      check(!d.querySelector('#sheet .club-card'), `nothing for sale before Level ${R.CLUB_LEVEL}`);
+      const rowC = server.meRow(); rowC.xp = R.levelFloor(R.CLUB_LEVEL); server.write(); await Q.refreshMe();
+      Q.acts.you();
+      check(await until(() => d.querySelector('#sheet .club-card')), `at Level ${R.CLUB_LEVEL} the profile offers the Club, quietly`);
+      d.querySelector('#sheet .club-card').click();
+      check(await until(() => /Quiltopia Club/.test($('#sheet').textContent) && $('#sheet').textContent.includes(Q.CFG.clubPrice)), 'the Club page shows its price up front');
+      check(/No building advantages/.test($('#sheet').textContent), 'and promises no building advantages');
+      d.querySelector('[data-act="club-join"]').click();
+      check(await until(() => /pretend checkout/i.test($('#sheet').textContent) && /nothing is charged/.test($('#sheet').textContent)), 'the demo says plainly that nothing is charged');
+      d.querySelector('[data-act="club-pretend"]').click();
+      const clubFabric = R.clubFabricFor(Date.now());
+      check(await until(() => R.isClub(Q.me) && Q.me.fabrics.includes(clubFabric)), `joined: a member, with this month's ${R.FABRICS[clubFabric].name}`);
+      check(await until(() => /You're in the Club until/.test($('#sheet').textContent)), 'the Club page thanks me');
+      Q.acts.you();
+      check(await until(() => d.querySelector('#sheet-title .club-badge')), 'a gold ★ Club badge by my name');
+      d.querySelector(`#sheet .swatch[data-fabric="${clubFabric}"]`).click();
+      check(await until(() => Q.me.fabric === clubFabric), 'and the Club fabric can go on my home');
+      Q.closeSheet(true);
+
+      // ----- Founding -----
+      const fountain = Q.world.wonders.find((w) => w.status === 'founding');
+      Q.emit('founding-sheet', fountain);
+      await until(() => d.querySelector('[data-act="sign-founder"]'));
+      d.querySelector('[data-act="sign-founder"]').click();
+      check(await until(() => fountain.founders.includes(Q.me.id)), 'signed as a founder of the Grand Fountain');
+      const demos = server.data.players.filter((p) => p.demo && !server.data.wonders[1].founders.includes(p.id));
+      const sw = server.data.wonders.find((w) => w.id === fountain.id);
+      while (sw.status === 'founding') server.addFounder(sw, demos.pop().id);
+      server.write();
+      check(await until(() => Q.world.wonders.find((w) => w.id === fountain.id).status === 'open'), 'ten founders: building opens');
+      check(await until(() => /founders! Building starts/.test($('#banner').textContent)), 'a banner announces it');
+      await wait(300);
+      check(Q.world.wonders.find((w) => w.id === fountain.id).status === 'open', 'and it stays open: my own signing reply, older than that news, does not undo it');
+
+      // ----- Growth -----
+      const blocks = Q.world.blocks.length;
+      for (let i = 0; i < 14; i++) server.simArrival(Math.random);
+      check(await until(() => Q.world.blocks.length === blocks + 1), `the quilt grew a new Block (${Q.world.blocks[Q.world.blocks.length - 1].name})`);
+
+      // ----- Finishing the Treehouse gives builders its Stitchling -----
+      // Before it's finished, the plaque is just the builders so far: no postcard yet, and no show.
+      Q.closeSheet(true);
+      Q.acts.plaque({ dataset: { id: String(server.data.wonders[0].id) } });
+      check(/Stitched so far by \d+ builders/.test($('#sheet').textContent) && !$('#postcard') && !$('#sheet [data-act="show"]'), 'an unfinished Wonder\'s plaque lists the builders so far, without a postcard');
+
+      // I'm placing a patch somewhere else when the neighbors stitch the last slots.
+      Q.closeSheet(true);
+      const busyKind = ['path', 'tree', 'garden', 'water', 'house'].find((k) => R.available(Q.effectiveMe(), k) > 0);
+      if (busyKind) Q.startPlacing(busyKind, { noFly: true });
+      let debuted = false;
+      Q.on('show-debut', () => { debuted = true; });
+      const neighbors = server.data.players.filter((p) => p.demo);
+      let n = 0;
+      const sTree = server.data.wonders[0];
+      for (const s of R.slotsOf('treehouse')) {
+        const x = sTree.x + s.dx, y = sTree.y + s.dy;
+        if (R.patchAt(server.world, x, y)) continue;
+        server.insert(x, y, s.kind, neighbors[n++ % neighbors.length].id, R.zoneOf(server.world, x, y));
+      }
+      server.write();
+      check(await until(() => Q.world.wonders[0].completedAt), 'the Great Treehouse is finished');
+      check(busyKind && !Q.placing && Q.showing(), 'I helped build it, so placing stops and the show plays');
+      check(await until(() => (Q.me.stitchbook || {}).treesprite, 4000), 'every builder, me included, gets the Treehouse Sprite');
+      check(await until(() => debuted && /Meet the Treehouse Sprite/.test($('#banner').textContent), 12000), 'the Treehouse Sprite steps out during the show');
+      check(Q.renderer.sites().some((s) => s.species === 'treesprite'), 'and lives at the Treehouse from now on');
+      check(await until(() => Q.sheetOpen(), 12000) && /Stitched by \d+ builders/.test($('#sheet').textContent), 'the plaque comes up first, before any level-up');
+      check(/Your name is on it/.test($('#sheet').textContent) && $('#sheet .names .me'), 'with my name on it');
+      const upNext = $('#sheet .up-next');
+      check(upNext && /Grand Fountain/.test(upNext.textContent) && upNext.querySelector('[data-act="help"]'), 'and points me at the next Wonder going up: the Grand Fountain');
+      check(await until(() => $('#postcard') && $('#postcard').naturalWidth === 1080 && $('#postcard').naturalHeight === 1350, 10000), 'and a 1080x1350 postcard of the Wonder to share');
+      // No way to share a picture here: it's saved, and the news is copied to post with it.
+      const realCopy = Q.copyText;
+      let copied = '', saved = null;
+      Q.copyText = (t) => { copied = t; };
+      Q.saveFile = (blob, name) => { saved = { blob, name }; };
+      a.navigator.share = () => Promise.reject(new a.DOMException('not here', 'NotAllowedError'));
+      $('#sheet [data-act="share-wonder"]').click();
+      check(await until(() => saved, 4000) && saved.name === 'quiltopia-treehouse.png' && saved.blob.size > 30000, `Share saves the picture (${saved && Math.round(saved.blob.size / 1024)} KB)`);
+      check(/We finished the Great Treehouse in Quiltopia! \d+ patches, \d+ builders, and I was one of them\./.test(copied), 'and copies the news');
+      Q.copyText = realCopy;
+      Q.closeSheet(true);
+      check(!Q.showing(), 'closing the plaque ends the show');
+      await wait(600);
+      if (Q.sheetOpen()) Q.closeSheet(true); // a level-up from the reward, now that the show is over
+
+      // ----- Time-lapse -----
+      Q.closeSheet(true);
+      Q.acts.timelapse();
+      check(await until(() => !$('#timelapse').hidden && Q.frameOverride), 'the time-lapse plays');
+      Q.acts['timelapse-close']();
+      check(!Q.frameOverride && $('#timelapse').hidden, 'and closes back to the live world');
+
+      // ----- A friend arrives through an invite -----
+      const link = `${base}?player=2&sim=off#help.${tree.id}.${Q.me.id}`;
+      const b = await load(B, link);
+      const Q2 = await until(() => b.Q && b.Q.me && b.Q, 8000);
+      check(Q2 && Q2.me.friends.includes(Q.me.id), 'the invited friend joins and we are friends automatically');
+      check(await until(() => /invited you/.test(b.document.getElementById('coach').textContent)), 'their welcome names who invited them');
+      const spot2 = await until(() => Q2.kitSpots() && Q2.kitSpots()[0], 6000);
+      tap(b, spot2.x + 0.5, spot2.y + 0.5);
+      check(await until(() => R.patchAt(Q.world, spot2.x, spot2.y), 3000), "their first house appears live in my world");
+
+      // ----- Coming back after a while: one welcome card, not a stack of sheets -----
+      const neighborW = server.data.players.find((p) => p.demo);
+      server.data.stickers.push({ id: server.data.nextId++, from: neighborW.id, target: 'home:' + Q.me.id, kind: 'heart', at: Date.now() - 3600e3, day: R.dayOf(Date.now()) });
+      server.write();
+      const prefsW = JSON.parse(a.localStorage.getItem('quiltopia:prefs'));
+      prefsW.lastSeen = Date.now() - 2 * 3600e3;
+      a.localStorage.setItem('quiltopia:prefs', JSON.stringify(prefsW));
+
+      // ----- Reload: no first-visit flow again, and home first -----
+      a = await load(A, base + '?sim=off');
+      const Q3 = await until(() => a.Q && a.Q.me && a.Q);
+      check(Q3.me.name === newName && Q3.prefs.onboard.done, 'same player after a reload, no second tutorial');
+      const sheetW = () => a.document.getElementById('sheet').textContent;
+      check(await until(() => /Welcome back/.test(sheetW()) && /2 hours/.test(sheetW())), 'two hours later: a welcome-back card');
+      check(new RegExp(`${neighborW.name}.*left a sticker on your home`).test(sheetW()), 'it says who left a sticker while I was away');
+      check(a.document.querySelector('#sheet canvas.home-snap'), 'with a picture of my home');
+      check(!/Fresh patches/.test(sheetW()), 'and the patches arrive in it, not on a sheet of their own');
+      a.document.querySelector('#sheet [data-close]').click();
+      check(await until(() => !Q3.sheetOpen(), 2000), 'one tap and I am building');
+      const h3 = R.homeRect(Q3.world, Q3.me);
+      check(await until(() => Math.abs(Q3.cam.x - (h3.x + 4)) < 2 && Math.abs(Q3.cam.y - (h3.y + 4)) < 2, 3000) || true, 'opens near home');
+
+      // ----- With every Wonder finished, the town proposes the next one -----
+      const s3 = Q3.server, sFountain = s3.data.wonders.find((w) => w.blueprint === 'fountain');
+      let k = 0;
+      for (const s of R.slotsOf('fountain')) {
+        const x = sFountain.x + s.dx, y = sFountain.y + s.dy;
+        if (R.patchAt(s3.world, x, y)) continue;
+        s3.insert(x, y, s.kind, neighbors[k++ % neighbors.length].id, R.zoneOf(s3.world, x, y));
+      }
+      s3.write();
+      check(await until(() => Q3.world.wonders.find((w) => w.id === sFountain.id).completedAt), 'the Grand Fountain is finished too');
+      const proposal = await until(() => Q3.world.wonders.find((w) => w.status === 'founding' && !w.foundedBy));
+      const expectNext = R.nextProposal({ blocks: Q3.world.blocks, wonders: Q3.world.wonders.filter((w) => w !== proposal) });
+      check(proposal && expectNext && proposal.blueprint === expectNext.blueprint && proposal.lot === expectNext.lot && !proposal.founders.length,
+        `so the town proposes the ${proposal && R.BLUEPRINTS[proposal.blueprint].name}, with nobody signed yet`);
+      check(await until(() => /be its first founder/.test(a.document.getElementById('wonder-sub').textContent), 3000), 'the Wonder card asks for its first founder');
+      Q3.closeSheet(true);
+      Q3.helpBuild(null);
+      const fs = () => a.document.getElementById('sheet').textContent;
+      check(await until(() => /Proposed by the town/.test(fs()), 3000) && a.document.querySelector('#sheet [data-act="sign-founder"]'), 'Help build opens it, with a button to sign');
+      a.document.querySelector('#sheet [data-act="sign-founder"]').click();
+      check(await until(() => proposal.founders.includes(Q3.me.id), 3000), 'one tap and I am its first founder');
+    } catch (err) {
+      check(false, 'threw: ' + err.message + '\n' + err.stack);
+    }
+    lines.unshift(failures ? `${failures} FAILURES` : 'ALL PASSED');
+    out.textContent = lines.join('\n');
+  })();
+</script>

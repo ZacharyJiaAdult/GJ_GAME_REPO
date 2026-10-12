@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Quiltopia</title>
+  <meta name="description" content="A world everyone builds together, a few patches a day, and nobody can wreck.">
+  <meta property="og:title" content="Quiltopia">
+  <meta property="og:description" content="Add a few patches a day to a world everyone builds together. Help finish the Great Treehouse.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#2b3851">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='16' height='16' fill='%23e4ebd0'/%3E%3Crect x='16' width='16' height='16' fill='%23f3e6c4'/%3E%3Crect y='16' width='16' height='16' fill='%23d8e7ee'/%3E%3Crect x='16' y='16' width='16' height='16' fill='%23f0d9d2'/%3E%3Crect x='3' y='3' width='26' height='26' fill='none' stroke='%23c4614c' stroke-width='2' stroke-dasharray='3 2'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Shantell+Sans:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="world" aria-label="Map of the Quiltopia world. Drag to move around, pinch or scroll to zoom, tap anything to see what it is."></canvas>
+
+  <header class="hud-top">
+    <div class="brand" id="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="15" height="15" rx="3" fill="#e4ebd0"/><rect x="16" y="1" width="15" height="15" rx="3" fill="#f3e6c4"/>
+        <rect x="1" y="16" width="15" height="15" rx="3" fill="#d8e7ee"/><rect x="16" y="16" width="15" height="15" rx="3" fill="#f0d9d2"/>
+        <rect x="4" y="4" width="24" height="24" rx="4" fill="none" stroke="#c4614c" stroke-width="2" stroke-dasharray="3 2.4"/>
+      </svg>
+      <div class="brand-text">
+        <span class="logo">Quiltopia</span>
+        <span class="season" id="season-label">Spring Meadow</span>
+      </div>
+    </div>
+    <button class="me-pill" id="me-pill" hidden aria-label="Your profile">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="15" height="15" rx="3" fill="#e4ebd0"/><rect x="16" y="1" width="15" height="15" rx="3" fill="#f3e6c4"/>
+        <rect x="1" y="16" width="15" height="15" rx="3" fill="#d8e7ee"/><rect x="16" y="16" width="15" height="15" rx="3" fill="#f0d9d2"/>
+        <rect x="4" y="4" width="24" height="24" rx="4" fill="none" stroke="#c4614c" stroke-width="2" stroke-dasharray="3 2.4"/>
+      </svg>
+      <span class="me-text">
+        <b id="me-name"></b>
+        <span class="me-meta"><span id="me-level"></span> · <span class="btn-coin" aria-hidden="true"></span><span id="me-buttons"></span></span>
+        <span class="xp-bar" aria-hidden="true"><i id="me-xp"></i></span>
+      </span>
+    </button>
+    <div class="hud-actions">
+      <button class="icon-btn" id="btn-daily" aria-label="Daily rewards and goals">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M8.5 3v4M15.5 3v4"/><path d="m9 15 2 2 4-4"/></svg>
+        <span class="dot" id="daily-dot" hidden></span>
+        <span class="goal-pips" id="goal-pips" aria-hidden="true"><i></i><i></i><i></i></span>
+      </button>
+      <button class="bag-chip" id="btn-bag" aria-label="Your patches">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="4" rx="1.5" fill="#a86a43"/><rect x="5" y="17" width="14" height="4" rx="1.5" fill="#a86a43"/><rect x="7" y="7" width="10" height="10" fill="#e86a92"/><path d="M7 9.5h10M7 12h10M7 14.5h10" stroke="#c14a74" stroke-width="1.2"/></svg>
+        <b id="bag-count">0</b>
+        <span id="bag-timer"></span>
+      </button>
+      <button class="icon-btn" id="btn-settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="zoom-pill" id="zoom-pill"></div>
+  <div class="zoom-btns">
+    <button class="icon-btn" id="zoom-in" aria-label="Zoom in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button class="icon-btn" id="zoom-out" aria-label="Zoom out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+  </div>
+  <div id="arrows" class="arrows"></div>
+
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <div class="dock" id="dock">
+    <div class="goal-card" id="goal-card" role="status" aria-live="polite" hidden></div>
+    <div class="card" id="card" hidden></div>
+    <div class="float-row">
+      <button class="wonder-card" id="wonder-card" hidden>
+        <svg class="ring" viewBox="0 0 36 36" aria-hidden="true">
+          <circle cx="18" cy="18" r="15" fill="none" stroke="var(--panel-2)" stroke-width="5"/>
+          <circle id="wonder-ring" cx="18" cy="18" r="15" fill="none" stroke="var(--gold)" stroke-width="5" stroke-linecap="round" stroke-dasharray="0 100" transform="rotate(-90 18 18)"/>
+        </svg>
+        <span class="wonder-text"><b id="wonder-name">Great Treehouse</b><small id="wonder-sub"></small></span>
+      </button>
+      <div class="basting" id="basting" hidden>
+        <span id="basting-text"></span>
+        <button class="btn small" id="btn-undo">Undo</button>
+      </div>
+    </div>
+
+    <div class="dock-panel">
+      <div id="dock-browse">
+        <p class="dock-hint" id="dock-hint"></p>
+        <div class="tray" id="tray" role="toolbar" aria-label="Your patches"></div>
+        <div class="nav-row">
+          <button class="nav-btn" id="btn-home">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/></svg>
+            <span>Home</span>
+          </button>
+          <button class="nav-btn" id="btn-goto">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2.2 4.8-4.8 2.2 2.2-4.8z"/></svg>
+            <span>Go to</span>
+          </button>
+          <button class="nav-btn" id="btn-book">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 1-4-4z"/><path d="M9 4v16"/><circle cx="14" cy="10" r="1.6"/></svg>
+            <span>Stitchbook</span>
+          </button>
+          <button class="nav-btn" id="btn-cup">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v4a5 5 0 0 1-10 0V4z"/><path d="M7 6H4.5a2.5 2.5 0 0 0 2.6 3.5M17 6h2.5a2.5 2.5 0 0 1-2.6 3.5M12 13v4M8.5 20h7M10 17h4"/></svg>
+            <span>Cup</span>
+          </button>
+          <button class="nav-btn help" id="btn-help-build">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>
+            <span>Help build</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="dock-place" hidden>
+        <div class="place-head">
+          <span class="place-icon" id="place-icon"></span>
+          <div class="place-text"><b id="place-title"></b><small id="place-sub"></small></div>
+          <button class="btn small" id="btn-done">Done</button>
+        </div>
+        <p class="place-hint" id="place-hint"></p>
+        <button class="btn primary wide" id="btn-confirm" disabled>Stitch it here</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="coach" id="coach" hidden role="status" aria-live="polite"></div>
+  <div class="magnifier" id="magnifier" hidden><canvas id="magnifier-canvas"></canvas></div>
+  <div class="timelapse" id="timelapse" hidden></div>
+
+  <div class="sheet-wrap" id="sheet-wrap" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="loading" id="loading"><span>Unrolling the quilt…</span></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/rules.js"></script>
+  <script src="js/stitchlings.js"></script>
+  <script src="js/seed.js"></script>
+  <script src="js/local-server.js"></script>
+  <script src="js/supabase-server.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/ui-sheets.js"></script>
+  <script src="js/ui-progress.js"></script>
+  <script src="js/ui-social.js"></script>
+  <script src="js/onboarding.js"></script>
+  <script src="js/timelapse.js"></script>
+</body>
+</html>

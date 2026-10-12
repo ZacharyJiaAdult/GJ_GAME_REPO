@@ -1,0 +1,199 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Quiltopia rules test</title>
+<pre id="out">running</pre>
+<script src="../js/config.js"></script>
+<script src="../js/rules.js"></script>
+<script src="../js/stitchlings.js"></script>
+<script src="../js/seed.js"></script>
+<script>
+  // Open in a browser (or `msedge --headless --dump-dom`) to check the rules, Stitchlings, landscape and demo world.
+  const R = window.QuiltRules, S = window.QuiltSeed, ST = window.QuiltStitchlings;
+  const lines = [];
+  let failures = 0;
+  const check = (ok, msg) => { if (!ok) { failures++; lines.push('FAIL ' + msg); } };
+
+  // Home plots: 36 per Neighborhood Block, 8x8, with 2-square lanes.
+  const plots = new Set();
+  for (let ly = 0; ly < 64; ly++) for (let lx = 0; lx < 64; lx++) { const i = R.plotIndexAt(lx, ly); if (i >= 0) plots.add(i); }
+  check(plots.size === 36, `36 plots per block (${plots.size})`);
+  check(R.plotIndexAt(1, 5) === -1 && R.plotIndexAt(2, 2) === 0 && R.plotIndexAt(9, 9) === 0 && R.plotIndexAt(10, 2) === -1 && R.plotIndexAt(12, 2) === 1, 'plot edges and lanes');
+
+  // Growth: new Blocks spiral out to the right and down, keeping the quilt square.
+  const coords = [];
+  for (let i = 0; i < 16; i++) coords.push(R.blockCoords(i).join(','));
+  check(new Set(coords).size === 16 && coords.every((c) => c.split(',').every((v) => +v >= 0 && +v < 4)), `16 Blocks fill a 4x4 quilt (${coords.join(' ')})`);
+  check(R.blockFor(4).kind === 'neighborhood' && R.blockFor(6).kind === 'commons' && R.blockFor(10).kind === 'commons', 'every fourth new Block is a Commons');
+  const names = new Set(); for (let i = 4; i < 200; i++) names.add(R.blockFor(i).name);
+  check(names.size === 196, 'new Block names never repeat');
+
+  // Blueprints.
+  for (const [id, bp] of Object.entries(R.BLUEPRINTS)) {
+    check(bp.rows.every((r) => r.length === bp.rows[0].length) && bp.rows.length <= R.LOT && bp.rows[0].length <= R.LOT, `${id} fits a lot`);
+    const counts = {};
+    R.slotsOf(id).forEach((s) => { counts[s.kind] = (counts[s.kind] || 0) + 1; });
+    lines.push(`${bp.name}: ${R.slotsOf(id).length} slots ${JSON.stringify(counts)}`);
+  }
+  check(R.slotsOf('treehouse').length === 196, 'the Great Treehouse has 196 slots');
+
+  // Zones, lots and placement.
+  const world = R.createWorld({ blocks: R.BLOCKS, wonders: R.WONDERS.map((w) => Object.assign({ status: 'open' }, w)), players: [] });
+  const me = { id: 'me', name: 'Cozy Otter', homeBlock: 1, homePlot: 14, picks: 3, items: { lantern: 1 }, keep: { bench: 1, windmill: 1 }, gifts: [], lastPeriod: 0, xp: 0 };
+  const other = { id: 'them', name: 'Brave Teapot', homeBlock: 1, homePlot: 0, picks: 3, items: {}, keep: {}, gifts: [] };
+  R.setPlayer(world, me); R.setPlayer(world, other);
+  const zt = (x, y) => R.zoneOf(world, x, y).type;
+  check(zt(88, 25) === 'plot' && zt(66, 22) === 'plot' && zt(84, 25) === 'shared' && zt(70, 90) === 'commons' && zt(88, 86) === 'frame' && zt(92, 86) === 'slot' && zt(-1, 5) === 'outside', 'zone types');
+  check(zt(64 + 10, 64 + 10) === 'lot', 'empty Wonder lots are saved');
+  const can = (x, y, kind, who, opts) => R.canPlace(world, who || me, x, y, kind, opts);
+  check(can(88, 25, 'house').ok && can(88, 25, 'park').ok && can(88, 25, 'market').ok, 'build houses, parks and markets in my home');
+  check(/Brave Teapot's home/.test(can(67, 3, 'house').reason), "can't build in a neighbor's plot");
+  check(/Only people who live in Thimble Hollow/.test(can(20, 1, 'tree').reason), "can't build on another Block's shared land");
+  check(can(70, 90, 'garden').ok, 'anyone can build in open Commons land');
+  check(/saved for a new Wonder/.test(can(74, 74, 'tree').reason), "can't build on an empty Wonder lot");
+  check(/needs a Tree/.test(can(92, 86, 'house').reason) && can(92, 86, 'tree').ok, 'Wonder slots only take their kind');
+  check(/filled 3 slots/.test(can(92, 86, 'tree', me, { wonderToday: () => 3 }).reason), '3 slots per Wonder per period');
+  check(can(88, 26, 'bench').ok && /go in your home/.test(can(84, 25, 'bench').reason), 'decorations only go in your home');
+  check(can(84, 25, 'windmill').ok && /needs a/.test(can(92, 86, 'windmill').reason), 'landmarks go anywhere you can build, but not in Wonder slots');
+  check(/come as surprises/.test(can(67, 3, 'lantern', other).reason), 'Lanterns need a surprise patch');
+
+  // Spending: gifts first (they carry the giver's name), then surprises, then picks; keepsakes apart.
+  const bag = { picks: 2, items: { tree: 1 }, keep: { bench: 1 }, gifts: [{ id: 1, kind: 'tree', from: 'pal' }] };
+  check(R.spend(bag, 'tree').from === 'pal' && R.spend(bag, 'tree').used === 'item' && R.spend(bag, 'tree').used === 'pick', 'gift, then surprise, then pick');
+  check(R.spend(bag, 'bench').used === 'keep' && R.spend(bag, 'bench') === null, 'keepsakes come from the keep');
+  check(R.heldTotal({ picks: 2, items: { tree: 1 }, keep: { bench: 5 }, gifts: [{ kind: 'tree' }] }) === 3, 'only daily patches count toward the cap');
+
+  // Allowance: 3 picks + 2 surprises per period, carried over up to 15.
+  const rand = R.mulberry32(1);
+  const fresh = { picks: 0, items: {}, lastPeriod: 99 };
+  const got = R.accrue(fresh, 100, rand);
+  check(got.picks === 3 && got.items.length === 2 && R.heldTotal(fresh) === 5, 'first refill gives 5 patches');
+  check(R.accrue(fresh, 100, rand).picks === 0, 'one refill per period');
+  R.accrue(fresh, 130, rand);
+  check(R.heldTotal(fresh) === 15, 'a long break fills the bag to 15, not more');
+
+  // Levels and Buttons.
+  check(R.levelOf(0) === 1 && R.levelOf(99) === 1 && R.levelOf(100) === 2 && R.levelOf(300) === 3 && R.levelOf(1000) === 5, 'level thresholds');
+  const climber = { xp: 90, buttons: 0 };
+  check(R.grantXp(climber, 20) === 2 && climber.buttons === 40, 'reaching Level 2 pays 40 Buttons');
+  const styler = { xp: 1400, buttons: 0, styles: ['patchwork'] };
+  R.grantXp(styler, 200);
+  check(styler.styles.includes('gingham'), 'Level 6 unlocks gingham roofs');
+
+  // Calendar: a reward a day; missing days pauses it.
+  const cal = { buttons: 0, keep: {}, outfits: [] };
+  const d1 = R.claimCalendar(cal, 1000, rand);
+  check(d1.day === 1 && cal.buttons === 20 && R.claimCalendar(cal, 1000, rand) === null, 'day 1 pays once');
+  R.claimCalendar(cal, 1005, rand);
+  const d3 = R.claimCalendar(cal, 1009, rand);
+  check(d3.day === 3 && R.DECOR.includes(d3.keep), 'skipped days pause the calendar; day 3 is a decoration');
+  for (let d = 0; d < 4; d++) R.claimCalendar(cal, 1010 + d, rand);
+  check(cal.calendar.day === 0 && Object.keys(cal.keep).some((k) => R.LANDMARKS.includes(k)), 'day 7 gives a landmark, then the week starts over');
+
+  // Goals are three a day, the same each time you look.
+  const g1 = R.goalsFor('me', 500);
+  check(g1.length === 3 && new Set(g1).size === 3 && g1.join() === R.goalsFor('me', 500).join(), 'three steady goals a day');
+
+  // Founding.
+  check(/Level 5/.test(R.canFound(world, me, 'teapot', 3, 2)), 'founding needs Level 5');
+  check(R.canFound(world, Object.assign({}, me, { xp: 1000 }), 'teapot', 3, 2) === null, 'a Level 5 builder can found on an empty lot');
+  check(/already has a Wonder/.test(R.canFound(world, Object.assign({}, me, { xp: 1000 }), 'teapot', 3, 0)), 'one Wonder per lot');
+
+  // There's always a next Wonder: once every one is finished, the town proposes another.
+  check(R.nextProposal(world) === null, 'no proposal while a Wonder is still going up');
+  const town = { blocks: world.blocks, wonders: [{ blueprint: 'treehouse', block: 3, lot: 0, completedAt: 1 }, { blueprint: 'fountain', block: 3, lot: 1, completedAt: 2 }] };
+  const np = R.nextProposal(town);
+  check(np && np.blueprint === 'lighthouse' && np.blockId === 3 && np.lot === 2, `then the least-built blueprint, on the first free Commons lot (${np && np.blueprint}, lot ${np && np.lot})`);
+  town.wonders.push({ blueprint: 'lighthouse', block: 3, lot: 2, completedAt: null, status: 'founding' });
+  check(R.nextProposal(town) === null, 'one proposal at a time: not while one is gathering founders');
+  const full = { blocks: world.blocks, wonders: [] };
+  for (const b of world.blocks.filter((x) => x.kind === 'commons')) R.LOTS.forEach((_, lot) => full.wonders.push({ blueprint: 'teapot', block: b.id, lot, completedAt: 1 }));
+  check(R.nextProposal(full) === null, 'and none when every Commons lot is taken');
+
+  // Names and nations.
+  const opts = R.nameOptions(rand, 4);
+  check(opts.length === 4 && opts.every(R.isValidName), 'name options come from the word lists');
+  check(!R.isValidName('Evil Otter') && !R.isValidName('Cozy  Otter'), 'free-typed names are rejected');
+  check(R.suggestNation(window.QUILT_CONFIG.nations, ['en-GB']) === 'GB', 'nation suggestion from language settings');
+
+  // Stitchlings: homes, needs and Cozy.
+  const tiny = R.createWorld({ blocks: R.BLOCKS, wonders: [], players: [] });
+  let id = 1;
+  const put = (x, y, kind, owner) => R.addPatch(tiny, { id: id++, x, y, kind, owner: owner || 'me', at: 0 });
+  put(5, 5, 'house'); put(6, 5, 'house'); put(7, 5, 'house');
+  let homes = ST.homes(tiny);
+  check(homes.length === 1 && homes[0].residents.length === 2 && homes[0].needs.mood === 0, 'three house squares make one home with two Stitchlings');
+  put(5, 6, 'garden'); put(8, 5, 'path'); put(5, 8, 'park');
+  homes = ST.homes(tiny);
+  check(homes[0].needs.food && homes[0].needs.fun && homes[0].needs.path && homes[0].needs.mood === 3, 'a garden, a park and a path make them happy');
+  check(!homes[0].needs.visit && ST.cozy(homes).get(0).score === 75, 'but with no neighbor to visit, Cozy stops at 75');
+  // A neighbor's home down the path: 20 squares of path away.
+  for (let x = 9; x <= 28; x++) put(x, 5, 'path');
+  put(29, 5, 'house', 'neighbor');
+  homes = ST.homes(tiny);
+  const mine = homes.find((h) => h.owner === 'me');
+  check(mine.needs.visit && mine.needs.mood === 4, "paths that reach a neighbor's home let them visit");
+  check(ST.cozy([mine]).get(0).score === 100, 'Cozy score reaches 100');
+  const route = ST.routeAlongPaths(tiny, 8, 5, 'me');
+  check(route && route.length === 20 && route[route.length - 1][0] === 28, 'a visiting Stitchling walks the path to the door');
+  const back = ST.routeAlongPaths(tiny, 28, 5, 'me', mine);
+  check(back && back[back.length - 1][0] === 8, 'and finds its way home');
+  // A long lane: the next house is 35 squares of path away, too far to visit; one halfway is close enough.
+  put(5, 40, 'house', 'far');
+  for (let x = 6; x <= 40; x++) put(x, 40, 'path');
+  put(41, 40, 'house', 'end');
+  const far = { cells: [{ x: 5, y: 40 }], owner: 'far' };
+  check(!ST.visitsNeighbor(tiny, far), `a neighbor more than ${ST.VISIT_STEPS} squares of path away is too far to visit`);
+  put(20, 41, 'house', 'mid');
+  check(ST.visitsNeighbor(tiny, far), 'one halfway along is close enough');
+
+  // Rare sites.
+  put(20, 20, 'water'); put(21, 21, 'tree'); put(22, 20, 'lantern');
+  check(ST.rareSites(tiny).some((s) => s.species === 'firefly'), 'water, a tree and a lantern bring a Firefly');
+  check(ST.meetAllowed(tiny, 'firefly', 22, 21) && !ST.meetAllowed(tiny, 'firefly', 60, 60), 'Fireflies can only be met where they live');
+  check(!ST.rareSites(tiny).some((s) => s.species === 'glowmoth') && ST.rareSites(tiny, { night: true }).some((s) => s.species === 'glowmoth') === (Math.random() < 2), 'Glowmoths only at night');
+
+  // Landscape: only on open land, never in homes, lots or Wonders.
+  let bad = 0, total = 0;
+  for (const b of [...R.BLOCKS, R.blockFor(4), R.blockFor(6)]) {
+    const land = S.landscapeFor(b);
+    const lw = R.createWorld({ blocks: [b] });
+    total += land.length;
+    for (const l of land) { const t = R.zoneOf(lw, l.x, l.y).type; if (t !== 'shared' && t !== 'commons') bad++; }
+  }
+  check(bad === 0, `landscape stays off plots and lots (${bad} of ${total} bad)`);
+  check(JSON.stringify(S.landscape()) === JSON.stringify(S.landscape()), 'landscape is the same every time');
+
+  // Demo world: every patch is on a square its owner was allowed to use.
+  const demo = S.demoWorld(Date.now(), 1);
+  const dw = R.createWorld(demo);
+  let illegal = 0, dupes = 0;
+  const seen = new Set();
+  for (const p of demo.patches) {
+    const key = p.y * dw.W + p.x;
+    if (seen.has(key)) dupes++;
+    seen.add(key);
+    const z = R.zoneOf(dw, p.x, p.y);
+    const owner = p.owner && dw.players.get(p.owner);
+    const ok = z.type === 'commons' || (z.type === 'slot' && z.slotKind === p.kind)
+      || (z.type === 'plot' && z.owner === p.owner) || (z.type === 'shared' && (!owner || owner.homeBlock === z.block.id) && !R.DECOR.includes(p.kind));
+    if (!ok) illegal++;
+  }
+  const prog = R.wonderProgress(dw, dw.wonders[0]);
+  const sites = ST.rareSites(dw, { night: true });
+  const species = [...new Set(sites.map((s) => s.species))].sort();
+  lines.push(`Demo: ${demo.players.length} neighbors, ${demo.patches.length} patches, Treehouse ${prog.filled}/${prog.slots}, ${demo.stickers.length} stickers`);
+  lines.push(`Rare Stitchlings to find: ${species.join(', ')}`);
+  const cz = ST.cozy(ST.homes(dw));
+  lines.push(`Cozy: ${[...cz].map(([b, c]) => `${R.blockById(dw, b).name} ${c.score}`).join(', ')}`);
+  check(illegal === 0 && dupes === 0, `demo patches are all legal (${illegal} illegal, ${dupes} duplicates)`);
+  check(species.length >= 8, `at least 8 kinds of rare Stitchling to discover (${species.length})`);
+  check(dw.wonders[1].status === 'founding' && dw.wonders[1].founders.length === 6, 'the Grand Fountain is gathering founders');
+  check(R.firstFreePlot(dw).block === 2 && R.firstFreePlot(dw).plot === 24, 'the next arrival gets Bobbin Bay plot 24');
+
+  // Nations Cup ranks by points per active builder.
+  const board = R.nationScores(dw, window.QUILT_CONFIG.nations, Date.now());
+  check(board.length > 0 && board.every((r, i) => i === 0 || board[i - 1].score >= r.score), 'nation board is sorted by score');
+
+  lines.unshift(failures ? `${failures} FAILURES` : 'ALL PASSED');
+  document.getElementById('out').textContent = lines.join('\n');
+</script>

@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "resumeAfterLimit": true,
+  "retryMinutes": 15,
+  "permissionMode": "auto"
+}
