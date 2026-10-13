@@ -19,7 +19,7 @@ window.QUILT_CONFIG = {
   // Required before launch: an address you check, e.g. a dedicated support@ or a new Gmail.
   contactEmail: 'winnerdude88888@gmail.com',
   // Whose law the terms follow, e.g. 'the State of California, USA'. Required before launch.
-  governingLaw: '',
+  governingLaw: 'New Zealand, and any dispute will be heard in the courts of Auckland',
 
   // The design doc asks for sign-in before building in the Commons. It's off for the prototype
   // so an invited friend's very first action can be filling a Wonder slot.
