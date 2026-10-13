@@ -448,6 +448,32 @@
       await as(await newUser());
       r = await call('get_me');
       check(r && r.ok === false && r.me === null, 'someone signed in but not joined yet has no player');
+
+      // ----- Deleting an account -----
+      const leaverJoin = await joinNew('Plucky Heron');
+      const leaver = leaverJoin.me && leaverJoin.me.id;
+      check(leaverJoin.ok && !!leaver, 'a player who wants to leave joins first');
+      await db.query("insert into patches (x, y, kind, owner) values (900, 900, 'tree', $1)", [leaver]);
+      await db.query("insert into patches (x, y, kind, owner, wonder_id) values (901, 901, 'tree', $1, 1)", [leaver]);
+      await db.query("insert into events (player, name) values ($1, 'open')", [leaver]);
+      await db.query('update players set friends = array_append(friends, $1) where id = $2', [leaver, A]);
+      await as(leaver);
+      await db.exec('set role authenticated');
+      r = (await one('select public.delete_my_account() as r')).r;
+      await db.exec('reset role');
+      check(r.ok, 'a player can delete their own account from the game');
+      check(Number((await one('select count(*) as n from auth.users where id = $1', [leaver])).n) === 0
+        && Number((await one('select count(*) as n from players where id = $1', [leaver])).n) === 0, 'which removes their sign-in and player');
+      check(Number((await one('select count(*) as n from events where player = $1', [leaver])).n) === 0, 'and their analytics events');
+      check(Number((await one('select count(*) as n from patches where x = 900 and y = 900')).n) === 0, 'and their own builds');
+      const kept = await one('select owner from patches where x = 901 and y = 901');
+      check(kept && kept.owner === null, 'but a patch they gave a Wonder stays, without their name');
+      check(!(await one('select friends from players where id = $1', [A])).friends.includes(leaver), "and they vanish from friends' lists");
+      await as('');
+      await db.exec('set role anon');
+      r = (await one('select public.delete_my_account() as r')).r;
+      await db.exec('reset role');
+      check(r.ok === false, "someone not signed in can't delete anything");
     } catch (err) {
       check(false, 'threw: ' + err.message + '\n' + (err.stack || ''));
     }

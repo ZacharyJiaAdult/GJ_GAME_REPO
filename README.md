@@ -19,7 +19,7 @@ No sign-up form. A new player lands on the whole quilt ("This bit is yours"), fl
 | Area | What players get |
 |---|---|
 | Building | 17 patch kinds that shape themselves to their neighbors: houses merge, gardens become fields, trees become forests, water joins into rivers, paths become bridges. Plus parks, markets, lanterns, three rare landmarks and six home decorations. |
-| The daily allowance | 3 picks and 2 surprises every hour while testing (`periodMinutes` in `js/config.js`; 1440 is daily). Unused patches carry over up to 15. Watering neighbors' gardens earns up to 3 more. At home a patch stitches at once; anywhere else it bastes for 10 seconds so you can undo. |
+| The daily allowance | 3 picks and 2 surprises a day (`periodMinutes` in `js/config.js`; set it to 60 for hourly test sessions). Unused patches carry over up to 15. Watering neighbors' gardens earns up to 3 more. At home a patch stitches at once; anywhere else it bastes for 10 seconds so you can undo. |
 | Stitchlings | One moves into every two house squares, wanders the paths and naps on benches. Each needs food (a garden), fun (a park or fountain), a path at the door, and paths that reach a neighbor's home within 30 squares, so they can visit (and they do: down the lanes to say hi, then home again). Building those paths together is the reason to talk to the people next door. Your own show what they wish for in a thought bubble, the tray marks the patch that grants it, and a granted wish pays 15 XP (a home with all four is "very cozy": 10 Buttons). Each Block gets a Cozy score from how happy they are. Ten rare species turn up only around particular builds (a Firefly where water, a tree and a lantern meet, a Mossling deep in a forest of 9, and so on). The Stitchbook has three pages, each paying a reward when it's complete. |
 | Progress | Builder levels from XP, with Buttons on every level-up. The Button Shop opens at Level 3, founding Wonders at Level 5, and new roof styles at Levels 6 to 8. A 7-day calendar pauses rather than resets. There are 3 daily goals, each with a Go button that takes you straight to it (the nearest thirsty garden with its Water button, a neighbor's guest book, a Block you've never seen, an open square beside a neighbor). Pips on the calendar button show the day's progress, each goal done rises from the dock with its Buttons, and the welcome-back card lists what's left. Plus outfits for your Stitchlings. |
 | Your quilt square | Every home is a square of fabric, so a Neighborhood looks like a patchwork quilt. Six everyday fabrics to switch between any time, two more at Levels 4 and 9, and four in the Button Shop (80 to 150 Buttons). |
@@ -28,7 +28,7 @@ No sign-up form. A new player lands on the whole quilt ("This bit is yours"), fl
 | Growth | When every home is taken, the quilt grows a new Block, landscape and all. Every fourth new Block is a Commons. |
 | And | Nations Cup (points per active builder, top three celebrated, can be switched off), a time-lapse replay you can record, day and night by your clock, Report with preset reasons, and moderator tools. |
 
-**Safety:** names come only from word lists, every piece of text is preset (there's no free typing), and nothing anyone builds can be removed by another player.
+**Safety:** names come only from word lists, every piece of text is preset (there's no free typing), and nothing anyone builds can be removed by another player. Online players can delete their account in Settings; the [Privacy](privacy.html) and [Terms](terms.html) pages explain what that removes.
 
 **Paying, fairly:** the design doc's rule is "never building power", and the game keeps to it. Buttons, earned only by playing, buy decorations, outfits and quilt fabrics in the Button Shop. From Level 8 your profile quietly offers **the Quiltopia Club** at $2.99 a month (set in `js/config.js`). It's looks only: a new gold-thread quilt fabric every month to keep, a gold ★ by your name on your home, profile and Wonder plaques, and your name in the season credits. The price is shown up front, there's no paid randomness and no countdowns, and the page says "Under 13? Ask a grown-up". In the demo world, joining is a clearly labeled pretend checkout.
 
@@ -48,13 +48,18 @@ No sign-up form. A new player lands on the whole quilt ("This bit is yours"), fl
 2. **Create the database.** Open **SQL Editor → New query**, paste all of [supabase/schema.sql](supabase/schema.sql), and click **Run**. Then do the same with [supabase/seed.sql](supabase/seed.sql). The first creates the tables and every rule as a database function. The second adds the rule numbers, the Blocks (and the ones planned ahead), the Wonder, the name and nation lists, and the starting landscape. Both are safe to run again.
 3. **Allow guest players.** Go to **Authentication → Sign In / Providers** and turn on **Anonymous sign-ins**. Players start without an account, as the doc asks.
 4. **Connect the game.** Under **Project Settings → API**, copy the **Project URL** and the **anon public** key into `supabaseUrl` and `supabaseAnonKey` in [js/config.js](js/config.js). The anon key is meant to be public; the database rules protect everything else.
-5. **Put it online.** Drag the project folder onto app.netlify.com/drop (free). Set `siteUrl` in `js/config.js` to the new address so invite links point to it, and upload again. In Supabase, set **Authentication → URL Configuration → Site URL** to the same address.
-6. **Make yourself a moderator.** Play once, then run this in the SQL Editor with your builder name:
+5. **Fill in the launch settings.** In `js/config.js`, set `contactEmail` (shown on the Privacy and Terms pages, where players and parents write about their data) and `governingLaw` (for example `'the State of California, USA'`). Until they're set, those pages show a red placeholder.
+6. **Put it online with Netlify (free).** Either:
+   - **From GitHub (recommended):** in Netlify, **Add new site → Import an existing project → GitHub**, pick this repo, and deploy. `netlify.toml` copies only what players need into the site, so the tests, tools, database files and design doc stay private, and every `git push` updates the live game.
+   - **By hand:** run `powershell -File tools/make-site.ps1`, then drag the `dist` folder onto app.netlify.com/drop.
+
+   Then set `siteUrl` in `js/config.js` to the new address so invite links point to it, and deploy again. In Supabase, set **Authentication → URL Configuration → Site URL** to the same address. Shared links show `og-image.png`; remake it with `tools/og-image.ps1` when the game's look changes.
+7. **Make yourself a moderator.** Play once, then run this in the SQL Editor with your builder name:
    ```sql
    insert into admins (id) select id from players where name = 'Brave Otter';
    ```
    **Moderator tools** then appears in Settings.
-7. **Google sign-in (optional).** In **Authentication → Sign In / Providers → Google**, add a client ID and secret from the Google Cloud console, and turn on **manual linking** so a guest keeps their progress when they sign in.
+8. **Google sign-in (optional).** In **Authentication → Sign In / Providers → Google**, add a client ID and secret from the Google Cloud console, and turn on **manual linking** so a guest keeps their progress when they sign in.
 
 If something is off, the game shows the error on its loading screen. Clear the two Supabase settings to fall back to the demo world.
 
@@ -140,6 +145,9 @@ Its log and run output are in `tools/kicker/logs/`, along with `baseline-2026-10
 | File | What it does |
 |---|---|
 | `index.html`, `css/style.css` | The page and its look |
+| `privacy.html`, `terms.html`, `css/legal.css`, `js/legal.js`, `404.html` | The Privacy and Terms pages (filled in from `js/config.js`) and the not-found page |
+| `netlify.toml`, `tools/make-site.ps1` | What goes on the live site, and how |
+| `og-image.png`, `tools/og-image.ps1` | The picture shown when a link is shared, and how to remake it |
 | `js/config.js` | Settings you'd change before a test |
 | `js/rules.js` | The game rules, shared by everything below |
 | `js/stitchlings.js` | Who lives where, what they need, Cozy scores, and where rare Stitchlings turn up |

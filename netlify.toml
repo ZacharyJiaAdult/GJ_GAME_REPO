@@ -1,0 +1,20 @@
+# Netlify settings for the live site. The game is plain files with no build step: this only
+# copies what players need into dist/, so the tests, tools, database files and design doc
+# stay off the public site. (For a drag-and-drop deploy, run tools/make-site.ps1 and drop dist/.)
+[build]
+  command = "rm -rf dist && mkdir dist && cp -r index.html privacy.html terms.html 404.html og-image.png css js dist/"
+  publish = "dist"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "SAMEORIGIN"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# Settings change between deploys, so browsers always check for a fresh copy.
+[[headers]]
+  for = "/js/config.js"
+  [headers.values]
+    Cache-Control = "no-cache"

@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Quiltopia share image</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shantell+Sans:wght@800&family=Atkinson+Hyperlegible:wght@700&display=swap">
+<style>
+  body { margin: 0; width: 1200px; height: 630px; overflow: hidden; position: relative; background: #2b3851; }
+  iframe { border: 0; position: absolute; inset: 0; }
+  .title { position: absolute; left: 44px; bottom: 40px; padding: 22px 30px 24px; border-radius: 22px; background: rgba(255, 255, 255, 0.94);
+    outline: 3px dashed #c3cde0; outline-offset: -10px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25); opacity: 0; }
+  .title h1 { margin: 0; font: 800 64px/1 'Shantell Sans', sans-serif; color: #1d2639; }
+  .title p { margin: 10px 0 0; font: 700 26px/1.25 'Atkinson Hyperlegible', sans-serif; color: #2f5bd3; }
+  body.ready .title { opacity: 1; }
+</style>
+<div id="frames"></div>
+<div class="title"><h1>Quiltopia</h1><p>Build a world together, a few patches a day.</p></div>
+<script>
+  // Makes og-image.png, the picture shown when someone shares a Quiltopia link.
+  // Run with tools/og-image.ps1. Plays the first visit in the demo world, then frames the Great Treehouse.
+  const base = new URL('../index.html?sim=off&player=', location.href).href;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) { const end = Date.now() + (ms || 8000); while (Date.now() < end) { try { const v = fn(); if (v) return v; } catch (e) {} await wait(50); } return null; }
+  function tap(win, x, y) {
+    const s = win.Q.toScreen(x, y), c = win.document.getElementById('world');
+    const o = { clientX: s.x, clientY: s.y, pointerId: 1, pointerType: 'touch', bubbles: true, isPrimary: true };
+    c.dispatchEvent(new win.PointerEvent('pointerdown', o)); c.dispatchEvent(new win.PointerEvent('pointerup', o));
+  }
+  function frame(slot, prefs) {
+    const f = document.createElement('iframe');
+    f.width = 1200; f.height = 630;
+    document.getElementById('frames').appendChild(f);
+    localStorage.setItem('quiltopia:prefs:' + slot, JSON.stringify(prefs || { night: 'day' }));
+    return new Promise((res) => { f.addEventListener('load', async () => { await until(() => f.contentWindow.Q && f.contentWindow.Q.me); res(f.contentWindow); }, { once: true }); f.src = base + slot; });
+  }
+  const coachHas = (w, re) => re.test(w.document.getElementById('coach').textContent) && !w.document.getElementById('coach').hidden;
+  const sheetHas = (w, re) => re.test(w.document.getElementById('sheet').textContent);
+  const click = (w, sel) => w.document.querySelector(sel).click();
+
+  async function tapHouse(w) {
+    await until(() => coachHas(w, /glowing house/));
+    const h = w.Q.kitSpots()[0];
+    tap(w, h.x + 0.5, h.y + 0.5);
+    await until(() => coachHas(w, /moved in/));
+    return h;
+  }
+  async function meet(w, h) {
+    const a = await until(() => w.Q.renderer.residentsOf(h.x, h.y)[0]);
+    tap(w, a.x, a.y - 0.15);
+    await until(() => Object.keys(w.Q.me.stitchbook || {}).length);
+  }
+  async function finishKit(w, noSheet) {
+    const h = await tapHouse(w);
+    await meet(w, h);
+    for (let k = 0; k < 4; k++) {
+      const s = await until(() => w.Q.kitSpots() && w.Q.kitSpots()[0]);
+      if (!s) break;
+      await wait(900);
+      tap(w, s.x + 0.5, s.y + 0.5);
+      await until(() => w.Q.R.patchAt(w.Q.world, s.x, s.y));
+    }
+    if (!noSheet) await until(() => sheetHas(w, /Home sweet home/), 6000);
+  }
+  async function toWonderHook(w) {
+    await finishKit(w);
+    click(w, '[data-act="ob-name"]');
+    await until(() => w.document.querySelector('#name-choices'));
+    click(w, '[data-act="save-name"]');
+    await until(() => sheetHas(w, /almost done/));
+  }
+  async function onboard(w) {
+    await toWonderHook(w);
+    click(w, '[data-act="ob-skip"]');
+    await until(() => w.document.querySelector('#nation-list'));
+    click(w, '#nation-list [data-code="JP"]');
+    await until(() => coachHas(w, /daily rewards/));
+    click(w, '#coach-btn');
+    await until(() => sheetHas(w, /Daily reward/));
+    w.Q.closeSheet(true);
+    await wait(300);
+  }
+
+  // Stops time in a frame: no more animation frames or timers, so the canvas keeps its last picture.
+  // t: the moment to draw (default now).
+  const freeze = (w, t) => {
+    // Headless Edge starves animation frames, so draw this moment by hand first (a few small steps, so sparks move).
+    const t0 = t || w.performance.now() / 1000;
+    for (let i = 0; i < 3; i++) w.Q.renderer.frame(w.Q.scene(), w.Q.cam, t0 + i * 0.05, 0.05);
+    w.Q.frameOverride = () => {}; // an animation frame already queued must not repaint over it
+    // Nor may it take in a world another frame saves later (a new one reloads the page), or save its own over it.
+    if (w.Q.server) { w.Q.server.pull = () => {}; w.Q.server.write = () => {}; }
+    w.requestAnimationFrame = () => 0; w.setTimeout = () => 0; w.setInterval = () => 0;
+    for (const k of ["openSheet", "coach", "coachHide", "flyTo", "card", "hideCard", "toast", "showBanner"]) w.Q[k] = () => {};
+    // Timers already running inside the app would hide these: keep them as they are now.
+    // CSS animations stop too: entrances at their end, a goal card at its fully shown middle.
+    for (const an of w.document.getAnimations()) { if (an.animationName === 'goal-rise') an.currentTime = 900; else try { an.finish(); } catch (e) { /* endless */ } an.pause(); }
+    for (const id of ["card", "coach", "basting", "banner", "goal-card"]) { const el = w.document.getElementById(id), was = el.hidden; new w.MutationObserver(() => { if (el.hidden !== was) el.hidden = was; }).observe(el, { attributes: true }); }
+  };
+  (async () => {
+    localStorage.clear();
+    const w = await frame('og', { night: 'day', sound: false });
+    await onboard(w);
+    w.Q.flyTo(+(new URLSearchParams(location.search).get("x") || 33), +(new URLSearchParams(location.search).get("y") || 34), +(new URLSearchParams(location.search).get("z") || 12), { ms: 40 });
+    await wait(1500);
+    for (let i = 0; i < 60; i++) w.Q.renderer.frame(w.Q.scene(), w.Q.cam, w.performance.now() / 1000 + i * 0.05, 0.05);
+    freeze(w);
+    const st = w.document.createElement('style');
+    st.textContent = 'body > :not(#world) { display: none !important; }';
+    w.document.head.appendChild(st);
+    document.body.classList.add('ready');
+  })();
+</script>

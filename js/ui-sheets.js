@@ -791,7 +791,7 @@
         <div class="setting"><span><b>Night lighting</b><small>Lanterns glow after 7 pm on your clock</small></span><div class="seg" role="radiogroup" aria-label="Night lighting">${night('auto', 'Auto')}${night('day', 'Day')}${night('night', 'Night')}</div></div>
         <div class="setting"><span><b>${Q.server.mode === 'demo' ? 'Demo world' : Q.signedIn ? 'Signed in' : 'Playing as a guest'}</b><small>${Q.server.mode === 'demo'
           ? 'Lives on this device. Neighbors are simulated. Connect Supabase to make it a shared world (see README).'
-          : Q.signedIn ? 'Your progress is tied to your Google account.' : 'Progress is saved on this device. Sign in to keep it everywhere.'}</small></span>
+          : Q.signedIn ? 'Your progress is tied to your Google account.' : 'Progress is saved on this device. Sign in to keep it everywhere (under 13? ask a grown-up to do it).'}</small></span>
           ${Q.server.mode !== 'demo' && !Q.signedIn ? '<button class="btn small" data-act="google">Sign in with Google</button>' : ''}</div>
       </div>
       <button class="btn wide" data-act="how">How to play</button>
@@ -807,7 +807,8 @@
         <span>Invites opened here</span><span>${metrics.invitesOpened}</span>
         <span>Invites that led to a Wonder slot</span><span>${metrics.invitesAccepted}</span>
       </div>
-      ${Q.server.mode === 'demo' ? '<button class="btn wide danger" data-act="reset">Start the demo world over</button>' : '<p class="muted small">Every player\'s numbers are in your Supabase events table; the README has the queries.</p>'}
+      ${Q.server.mode === 'demo' ? '<button class="btn wide danger" data-act="reset">Start the demo world over</button>' : (me ? '<button class="btn wide danger" data-act="delete-account">Delete my account</button>' : '')}
+      <p class="muted small legal-links"><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="terms.html" target="_blank" rel="noopener">Terms</a></p>
     `, { name: 'settings' });
   }
 
@@ -831,6 +832,19 @@
     if (!el.dataset.sure) { el.dataset.sure = '1'; el.textContent = 'Tap again to erase the demo world'; return; }
     Q.server.resetWorld();
     try { Object.keys(localStorage).filter((k) => k.startsWith('quiltopia:prefs') || k.startsWith('quiltopia:pending')).forEach((k) => localStorage.removeItem(k)); } catch (e) { /* storage blocked */ }
+    location.reload();
+  };
+
+  Q.acts['delete-account'] = async (el) => {
+    if (!el.dataset.sure) {
+      el.dataset.sure = '1';
+      el.textContent = 'Tap again: delete my builder, home and progress for good';
+      return;
+    }
+    el.disabled = true;
+    const r = await Q.server.deleteAccount();
+    if (!r.ok) { el.disabled = false; Q.toast(r.error || 'That didn\'t work. Try again.', true); return; }
+    try { Object.keys(localStorage).filter((k) => k.startsWith('quiltopia:')).forEach((k) => localStorage.removeItem(k)); } catch (e) { /* storage blocked */ }
     location.reload();
   };
 

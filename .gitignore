@@ -6,3 +6,6 @@ tools/kicker/logs/
 
 # The artifact preview page, built from index.html without its document wrapper
 .preview/
+
+# The deployable site, built by tools/make-site.ps1 or by Netlify
+dist/

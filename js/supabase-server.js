@@ -218,6 +218,13 @@
     }
     signFounder(wonderId) { return this.act('sign_founder', { p_wonder: wonderId }); }
 
+    // Removes the player and their sign-in for good (see delete_my_account in supabase/schema.sql).
+    async deleteAccount() {
+      const r = await this.act('delete_my_account');
+      if (r.ok) await this.sb.auth.signOut().catch(() => {});
+      return r;
+    }
+
     signInWithGoogle() {
       return this.sb.auth.linkIdentity({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } })
         .then(({ error }) => { if (error) throw new Error(`Google sign-in isn't set up yet (${error.message}).`); });

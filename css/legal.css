@@ -1,0 +1,73 @@
+/* Privacy and Terms pages: the game's denim and thread, on a readable page. */
+:root {
+  --table: #2b3851;
+  --page: #fbf7ef;
+  --ink: #1d2639;
+  --muted: #5b6578;
+  --stitch: #c3cde0;
+  --accent: #2f5bd3;
+  --thread: #f2b84b;
+  --warn: #b3261e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #1b2333;
+    --ink: #eef1f7;
+    --muted: #a9b2c4;
+    --stitch: #3a4660;
+    --accent: #8fb0ff;
+    --warn: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--table);
+  color: var(--ink);
+  font: 17px/1.6 'Atkinson Hyperlegible', system-ui, sans-serif;
+}
+
+main {
+  max-width: 760px;
+  margin: 32px auto;
+  padding: 36px 44px 44px;
+  background: var(--page);
+  border-radius: 18px;
+  outline: 2px dashed var(--stitch);
+  outline-offset: -10px;
+}
+
+@media (max-width: 640px) {
+  main { margin: 0; padding: 28px 22px 36px; border-radius: 0; }
+}
+
+h1, h2 { font-family: 'Shantell Sans', 'Atkinson Hyperlegible', sans-serif; line-height: 1.2; }
+h1 { font-size: 40px; margin: 18px 0 8px; }
+h2 { font-size: 23px; margin: 34px 0 10px; }
+
+.lede { font-size: 19px; margin: 0 0 6px; }
+.meta { color: var(--muted); font-size: 15px; margin: 0; }
+
+.back { color: var(--accent); font-weight: 700; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+a { color: var(--accent); }
+
+.summary {
+  margin: 26px 0 8px;
+  padding: 4px 22px 10px;
+  border-radius: 14px;
+  border-left: 6px solid var(--thread);
+  background: color-mix(in srgb, var(--thread) 14%, transparent);
+}
+.summary h2 { margin-top: 16px; }
+
+ul { padding-left: 22px; }
+li { margin: 6px 0; }
+
+dt { font-weight: 700; margin-top: 16px; }
+dd { margin: 4px 0 0; }
+
+.missing { color: var(--warn); font-weight: 700; }

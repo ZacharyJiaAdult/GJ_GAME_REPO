@@ -12,7 +12,7 @@
 -- carries the rest of js/rules.js and js/stitchlings.js (XP, goals, the shop, Stitchlings) as JSON.
 create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
-  period_minutes int not null default 60,
+  period_minutes int not null default 1440,
   commons_requires_signin boolean not null default false,
   picks_per_period int not null default 3,
   surprises_per_period int not null default 2,
@@ -1155,6 +1155,25 @@ begin
   update players set nation = p_nation where id = auth.uid();
   if not found then return err('Join the world first.'); end if;
   return ok_me(auth.uid(), null, '{}'::jsonb);
+end $$;
+
+-- Deletes the caller's account and everything about them (see privacy.html). Their own builds go;
+-- patches they put into Wonders stay, so nobody else's Wonder breaks, but without their name.
+create or replace function public.delete_my_account() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then return err('Not signed in.'); end if;
+  update patches set owner = null where owner = me and wonder_id is not null;
+  delete from patches where owner = me;
+  update reports set owner = null where owner = me;
+  delete from events where player = me;
+  update players set friends = array_remove(friends, me) where me = any(friends);
+  update players set invited_by = null where invited_by = me;
+  delete from players where id = me;
+  delete from auth.users where id = me;
+  return jsonb_build_object('ok', true);
 end $$;
 
 -- This week's points per active builder: 1 per patch, 3 per Wonder slot.
