@@ -17,7 +17,7 @@ window.QUILT_CONFIG = {
 
   // Shown on privacy.html and terms.html. Players and parents write here to ask about their data.
   // Required before launch: an address you check, e.g. a dedicated support@ or a new Gmail.
-  contactEmail: '',
+  contactEmail: 'winnerdude88888@gmail.com',
   // Whose law the terms follow, e.g. 'the State of California, USA'. Required before launch.
   governingLaw: '',
 
