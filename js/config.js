@@ -9,8 +9,8 @@ window.QUILT_CONFIG = {
 
   // Leave both empty to play the demo world that lives on this device.
   // Paste your Supabase project's URL and anon key to make it a live shared world (see README).
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://rjfeefdvfrztjefcbstb.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqZmVlZmR2ZnJ6dGplZmNic3RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4Nzg0NTksImV4cCI6MjEwNzQ1NDQ1OX0.fj1IjKjIHHA7z6rRWBtilGwi7yaC3lLtgCls66tFuyg',
 
   // Your live site, used in invite links. Left empty, links point at this page.
   siteUrl: 'https://quiltopia.netlify.app/',

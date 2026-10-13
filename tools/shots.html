@@ -7,7 +7,7 @@
   // Phone-sized frames (390x844), each driven to a different moment of real play. ?set=1..14 picks which:
   // 1-4 the first visit, 5 onward after it (see the notes on each set). Run with tools/shots.ps1, which saves PNGs.
   // Clears this browser's demo world.
-  const base = new URL('../index.html?sim=off&player=', location.href).href;
+  const base = new URL('../index.html?demo&sim=off&player=', location.href).href;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   async function until(fn, ms) { const end = Date.now() + (ms || 8000); while (Date.now() < end) { try { const v = fn(); if (v) return v; } catch (e) {} await wait(50); } return null; }
   function tap(win, x, y) {

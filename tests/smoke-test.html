@@ -35,9 +35,9 @@
   (async () => {
     try {
       const A = document.getElementById('a'), B = document.getElementById('b');
-      let a = await load(A, base + '?sim=off');
+      let a = await load(A, base + '?demo&sim=off');
       Object.keys(a.localStorage).filter((k) => k.startsWith('quiltopia')).forEach((k) => a.localStorage.removeItem(k));
-      a = await load(A, base + '?sim=off');
+      a = await load(A, base + '?demo&sim=off');
       let d = a.document;
       const $ = (s) => d.querySelector(s);
       const Q = await until(() => a.Q && a.Q.world && a.Q);
@@ -364,7 +364,7 @@
       check(!Q.frameOverride && $('#timelapse').hidden, 'and closes back to the live world');
 
       // ----- A friend arrives through an invite -----
-      const link = `${base}?player=2&sim=off#help.${tree.id}.${Q.me.id}`;
+      const link = `${base}?demo&player=2&sim=off#help.${tree.id}.${Q.me.id}`;
       const b = await load(B, link);
       const Q2 = await until(() => b.Q && b.Q.me && b.Q, 8000);
       check(Q2 && Q2.me.friends.includes(Q.me.id), 'the invited friend joins and we are friends automatically');
@@ -382,7 +382,7 @@
       a.localStorage.setItem('quiltopia:prefs', JSON.stringify(prefsW));
 
       // ----- Reload: no first-visit flow again, and home first -----
-      a = await load(A, base + '?sim=off');
+      a = await load(A, base + '?demo&sim=off');
       const Q3 = await until(() => a.Q && a.Q.me && a.Q);
       check(Q3.me.name === newName && Q3.prefs.onboard.done, 'same player after a reload, no second tutorial');
       const sheetW = () => a.document.getElementById('sheet').textContent;

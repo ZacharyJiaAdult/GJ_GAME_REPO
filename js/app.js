@@ -17,7 +17,8 @@
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
   const haptic = (ms) => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* unsupported */ } };
 
-  const online = !!(CFG.supabaseUrl && CFG.supabaseAnonKey);
+  // ?demo plays the demo world even when Supabase is set up (the tests and screenshots use it).
+  const online = !!(CFG.supabaseUrl && CFG.supabaseAnonKey) && !params.has('demo');
   const server = online
     ? new window.QuiltSupabase(CFG)
     : new window.QuiltLocal(CFG, { player: params.get('player'), sim: params.get('sim') !== 'off' });

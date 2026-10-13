@@ -61,7 +61,7 @@ No sign-up form. A new player lands on the whole quilt ("This bit is yours"), fl
    **Moderator tools** then appears in Settings.
 8. **Google sign-in (optional).** In **Authentication → Sign In / Providers → Google**, add a client ID and secret from the Google Cloud console, and turn on **manual linking** so a guest keeps their progress when they sign in.
 
-If something is off, the game shows the error on its loading screen. Clear the two Supabase settings to fall back to the demo world.
+If something is off, the game shows the error on its loading screen. Clear the two Supabase settings to fall back to the demo world, or add `?demo` to the address to play the demo world without changing them (the tests and screenshots do this, so they never touch the live database).
 
 ### The Quiltopia Club with Stripe (optional)
 
