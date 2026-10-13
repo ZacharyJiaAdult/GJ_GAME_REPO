@@ -13,7 +13,7 @@ window.QUILT_CONFIG = {
   supabaseAnonKey: '',
 
   // Your live site, used in invite links. Left empty, links point at this page.
-  siteUrl: '',
+  siteUrl: 'https://quiltopia.netlify.app/',
 
   // Shown on privacy.html and terms.html. Players and parents write here to ask about their data.
   // Required before launch: an address you check, e.g. a dedicated support@ or a new Gmail.
